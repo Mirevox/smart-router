@@ -30,7 +30,7 @@ Draft ambitions that created false claims or unsafe surface were cut during vett
 
 | Topic | Disposition | Rationale & v0.1 Boundary |
 | --- | --- | --- |
-| **LiteLLM / Bifrost wrapper vs. owned Hono gateway** | **Owned Hono kept for v0.1; LiteLLM wrap deferred to v0.2+** | Hono stub (~450 LOC, 12 passing tests) locks Mirevox's exact extension contracts (`POST /v1/fanout`, `/admin/*`, activity placement). Delegating live cloud providers to LiteLLM/Bifrost behind `src/backends/` remains the preferred v0.2+ option instead of rewriting 50+ SDKs. |
+| **LiteLLM / Bifrost wrapper vs. owned Hono gateway** | **Owned Hono kept for v0.1; LiteLLM wrap deferred to v0.2+** | Hono stub (~450 LOC, 40 passing tests) locks Mirevox's exact extension contracts (`POST /v1/fanout`, `/admin/*`, activity placement). Delegating live cloud providers to LiteLLM/Bifrost behind `src/backends/` remains the preferred v0.2+ option instead of rewriting 50+ SDKs. |
 | **Implicit task splitting inside `/v1/chat/completions`** | **Cut (DA agreed)** | Preserves single-route OpenAI client compatibility. Explicit fan-out lives solely on `POST /v1/fanout`. |
 | **Workflow-by-reference URL fetch & MCP stdio execution** | **Cut (DA agreed)** | Eliminates SSRF and RCE risks. MCP appears only as a static stub catalog entry in v0.1. |
 | **Auto-onboarding arbitrary polled endpoints** | **Cut (DA agreed)** | Providers are declared statically in `config/default.yaml`; no silent unreviewed route injection. |
@@ -90,7 +90,7 @@ Draft ambitions that created false claims or unsafe surface were cut during vett
 | Gate | Command / Check | Pass Condition |
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` | Exit `0`, 0 errors |
-| Test suite | `npm test` | Exit `0`, 4 suites / 12 tests pass, 0 failed/skipped |
+| Test suite | `npm test` | Exit `0`, 6 suites / 40 tests pass, 0 failed/skipped |
 | Build | `npm run build` | Exit `0`, `dist/index.js` built |
 | Docker Compose | `docker compose up --build -d` | `smart-router` container reaches `healthy` within `<= 30 s` |
 | Auth gate | `GET /v1/models` without bearer | HTTP `401` |
