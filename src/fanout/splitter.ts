@@ -30,12 +30,13 @@ async function runOne(
     backend: task.backend,
   });
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       stubComplete(decision, task.messages),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("task timeout")), timeoutMs),
-      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("task timeout")), timeoutMs);
+      }),
     ]);
     return {
       id: task.id,
@@ -52,6 +53,8 @@ async function runOne(
       error: err instanceof Error ? err.message : String(err),
       duration_ms: Date.now() - started,
     };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

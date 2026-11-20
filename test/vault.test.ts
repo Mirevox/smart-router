@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KeyVault } from "../src/vault/key-vault.js";
@@ -26,6 +26,8 @@ describe("KeyVault", () => {
     assert.equal(listed[0]?.has_secret, true);
     assert.ok(!("secret" in (listed[0] as object)));
     assert.equal(vault.getSecret("azure-foundry"), "sk-test-secret");
+    const mode = statSync(join(dir, "vault.json")).mode & 0o777;
+    assert.equal(mode, 0o600);
   });
 
   it("deletes keys", () => {

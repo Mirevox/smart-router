@@ -69,7 +69,7 @@ export async function stubComplete(
       backend: decision.backend,
       placement: decision.placement,
       activity: decision.activity,
-      stub: decision.stub,
+      stub: true,
     },
   };
 }

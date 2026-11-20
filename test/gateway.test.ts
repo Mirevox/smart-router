@@ -131,6 +131,7 @@ describe("OpenAI gateway", () => {
       { Authorization: "Bearer wrong-key" },
       { Authorization: "Bearer" },
       { Authorization: "Basic mirevox-dev-key" },
+      { Authorization: "mirevox-dev-key" },
     ];
 
     for (const route of routes) {
@@ -361,6 +362,160 @@ describe("gateway auth and health edges", () => {
       });
       const listed = (await models.json()) as { data: unknown[] };
       assert.equal(listed.data.length, 0);
+      registry.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Authorization without Bearer scheme", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mirevox-bearer-"));
+    try {
+      const config = loadConfig("./config/default.yaml");
+      config.vault.path = join(dir, "vault.json");
+      const vault = new KeyVault(config.vault);
+      const registry = new DiscoveryRegistry(config, vault);
+      await registry.pollAll();
+      const gw = createGateway({
+        config,
+        policy: new RoutingPolicy(config),
+        registry,
+        vault,
+      });
+      const res = await gw.request("/v1/models", {
+        headers: { Authorization: "mirevox-dev-key" },
+      });
+      assert.equal(res.status, 401);
+      registry.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns JSON 404 for unknown routes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mirevox-404-"));
+    try {
+      const config = loadConfig("./config/default.yaml");
+      config.vault.path = join(dir, "vault.json");
+      const vault = new KeyVault(config.vault);
+      const registry = new DiscoveryRegistry(config, vault);
+      await registry.pollAll();
+      const gw = createGateway({
+        config,
+        policy: new RoutingPolicy(config),
+        registry,
+        vault,
+      });
+      const res = await gw.request("/v1/nonexistent", {
+        headers: { Authorization: "Bearer mirevox-dev-key" },
+      });
+      assert.equal(res.status, 404);
+      const body = (await res.json()) as {
+        error: { message: string; type: string };
+      };
+      assert.equal(body.error.type, "invalid_request_error");
+      registry.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns JSON 400 for malformed JSON bodies", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mirevox-badjson-"));
+    try {
+      const config = loadConfig("./config/default.yaml");
+      config.vault.path = join(dir, "vault.json");
+      const vault = new KeyVault(config.vault);
+      const registry = new DiscoveryRegistry(config, vault);
+      await registry.pollAll();
+      const gw = createGateway({
+        config,
+        policy: new RoutingPolicy(config),
+        registry,
+        vault,
+      });
+      const res = await gw.request("/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer mirevox-dev-key",
+          "Content-Type": "application/json",
+        },
+        body: "{bad json",
+      });
+      assert.equal(res.status, 400);
+      const body = (await res.json()) as { error: { type: string } };
+      assert.equal(body.error.type, "invalid_request_error");
+      registry.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps mirevox.stub true even when SMART_ROUTER_STUB_MODE=false", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mirevox-stubflag-"));
+    const prev = process.env.SMART_ROUTER_STUB_MODE;
+    process.env.SMART_ROUTER_STUB_MODE = "false";
+    try {
+      const config = loadConfig("./config/default.yaml");
+      config.vault.path = join(dir, "vault.json");
+      const vault = new KeyVault(config.vault);
+      const registry = new DiscoveryRegistry(config, vault);
+      await registry.pollAll();
+      const gw = createGateway({
+        config,
+        policy: new RoutingPolicy(config),
+        registry,
+        vault,
+      });
+      const res = await gw.request("/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer mirevox-dev-key",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "stub honesty" }],
+        }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        choices: Array<{ message: { content: string } }>;
+        mirevox: { stub: boolean };
+      };
+      assert.match(body.choices[0]?.message.content ?? "", /mirevox-stub/);
+      assert.equal(body.mirevox.stub, true);
+      registry.stop();
+    } finally {
+      if (prev === undefined) delete process.env.SMART_ROUTER_STUB_MODE;
+      else process.env.SMART_ROUTER_STUB_MODE = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects non-array fanout tasks with 400", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mirevox-fanout-bad-"));
+    try {
+      const config = loadConfig("./config/default.yaml");
+      config.vault.path = join(dir, "vault.json");
+      const vault = new KeyVault(config.vault);
+      const registry = new DiscoveryRegistry(config, vault);
+      await registry.pollAll();
+      const gw = createGateway({
+        config,
+        policy: new RoutingPolicy(config),
+        registry,
+        vault,
+      });
+      const res = await gw.request("/v1/fanout", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer mirevox-dev-key",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tasks: "abc" }),
+      });
+      assert.equal(res.status, 400);
       registry.stop();
     } finally {
       rmSync(dir, { recursive: true, force: true });

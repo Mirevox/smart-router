@@ -31,7 +31,8 @@ export function createGateway(deps: {
       return next();
     }
     const header = c.req.header("authorization") ?? "";
-    const token = header.replace(/^Bearer\s+/i, "").trim();
+    const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+    const token = match?.[1]?.trim() ?? "";
     if (token !== expected) {
       throw new HTTPException(401, { message: "Invalid API key" });
     }
@@ -89,7 +90,7 @@ export function createGateway(deps: {
   /** Non-OpenAI extension: parallel task fan-out */
   app.post("/v1/fanout", async (c) => {
     const body = (await c.req.json()) as FanoutRequest;
-    if (!body?.tasks?.length) {
+    if (!Array.isArray(body?.tasks) || body.tasks.length === 0) {
       throw new HTTPException(400, { message: "tasks[] required" });
     }
     const result = await fanoutTasks(deps.config, deps.policy, body);
@@ -140,9 +141,30 @@ export function createGateway(deps: {
     return c.json({ data });
   });
 
+  app.notFound((c) =>
+    c.json(
+      { error: { message: "Not found", type: "invalid_request_error" } },
+      404,
+    ),
+  );
+
   app.onError((err, c) => {
     if (err instanceof HTTPException) {
-      return c.json({ error: { message: err.message, type: "invalid_request_error" } }, err.status);
+      return c.json(
+        { error: { message: err.message, type: "invalid_request_error" } },
+        err.status,
+      );
+    }
+    if (err instanceof SyntaxError) {
+      return c.json(
+        {
+          error: {
+            message: "Invalid JSON body",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
     }
     console.error(err);
     return c.json(

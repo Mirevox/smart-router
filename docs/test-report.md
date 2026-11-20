@@ -1,21 +1,20 @@
 # Test report — Smart Router v0.1
 
 **Command:** `npm test`  
-**Result:** **35/35 pass** (6 suites), typecheck/build green  
-**SHA:** see `git rev-parse HEAD` after this commit
+**Result:** **40/40 pass** (6 suites) in ~0.5s (was ~60s before fan-out timer clear)  
+**Typecheck / build:** green
 
 ## Suites
 
-| Suite | Coverage |
+| Suite | Notes |
 | --- | --- |
-| `test/policy.test.ts` | model glob routes, placement/backend overrides |
-| `test/vault.test.ts` | CRUD, no secret leak on list, env overrides file |
-| `test/fanout.test.ts` | parallel backends, order, max_parallel, timeouts |
-| `test/gateway.test.ts` | 401s on OpenAI/admin, models, chat metadata, vault, health |
-| `test/registry.test.ts` | Foundry/Bedrock/Vertex/local/MCP poll stubs, start/stop |
-| (embedded) | health before/after poll paths in gateway/registry |
+| policy | model/activity routing |
+| vault | CRUD, env override, `0o600` mode |
+| fanout | order, parallelism, timeouts |
+| gateway | Bearer auth, JSON 404/400, stub honesty, fan-out validation, admin |
+| registry | poll stubs + lifecycle |
+| gateway auth/health edges | open mode, pre-poll health |
 
-## Gaps
+## Acceptance deltas covered
 
-- No Docker image build in this VM (no docker daemon)
-- No live provider integration tests (stub mode by design)
+D-01 Bearer scheme · D-02 JSON 404/400 · D-03 stub always true · D-04 tasks array + clearTimeout · D-05 vault mode
