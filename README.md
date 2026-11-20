@@ -1,36 +1,27 @@
 # Mirevox Smart Router
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 OpenAI-compatible control-plane gateway for hybrid home-lab + cloud AI.
 
-Point VS Code, Continue, Open WebUI, or a home chatbot at one local base URL. The router holds provider keys, applies on-prem vs cloud placement by activity, discovers Foundry / Bedrock / Vertex / local / MCP catalogs (stub polling in v0.1), and can fan out multi-part work across backends.
+Part of [Mirevox](https://github.com/Mirevox).
 
-Part of the [Mirevox](https://github.com/Mirevox) open-source control-plane modules. Composes with planned `evals`, `data-lineage`, and harness workflow modules via a single observable choke point.
+## Problem
 
-**License:** Apache-2.0
+Builders mix local models, Foundry / Bedrock / Vertex, MCP servers, and chat UIs — then duplicate API keys across VS Code, a home chatbot, and scripts, with no single place to say “code stays on-prem, chat may use cloud.” Generic proxies unify APIs; they rarely give you an operator-owned inventory, activity-level egress choice, and parallel task fan-out in one Dockerized choke point.
 
-## Status (v0.1)
+Smart Router is that choke point: one base URL, central keys, declarative on-prem vs cloud policy, discovery polling stubs, and `POST /v1/fanout`.
 
-Runnable stub. Real mechanisms: HTTP gateway, file/env key vault, routing policy, parallel fan-out, discovery registry with polling loop. Provider adapters return deterministic OpenAI-shaped responses tagged `mirevox.stub: true` until credentials + live SDKs are wired.
+## Quick start (Docker)
 
-| Capability | v0.1 |
-| --- | --- |
-| `POST /v1/chat/completions` | Stub complete + routing metadata |
-| `GET /v1/models` | From discovery registry |
-| `POST /v1/fanout` | Parallel task split (Mirevox extension) |
-| Key vault | File + `SMART_ROUTER_KEY_*` env |
-| Placement policy | Activity → onprem/cloud |
-| Registry poll | Foundry / Bedrock / Vertex / local / MCP stubs |
-| Streaming | Not yet |
-| Live provider SDKs | Deferred |
-
-## Quick start
+One command (no cloud keys required; stub mode on by default):
 
 ```bash
-npm install
-npm test
-npm run dev
-# listens on http://127.0.0.1:18765
+docker compose up --build
+# http://127.0.0.1:18765/health
 ```
+
+Optional: `cp .env.example .env` and set `SMART_ROUTER_API_KEY` (and later `SMART_ROUTER_KEY_*`). Secrets stay in env / the `router-data` volume — **nothing secret is baked into the image**.
 
 ```bash
 curl -s http://127.0.0.1:18765/health
@@ -48,13 +39,51 @@ curl -s http://127.0.0.1:18765/v1/chat/completions \
   }'
 ```
 
-Docker Compose:
+### Local Node (optional)
 
 ```bash
-docker compose up --build
+cp .env.example .env   # optional
+npm install
+npm test
+npm run dev            # http://127.0.0.1:18765
 ```
 
 Configure via `config/default.yaml` and `.env.example`.
+
+## Status (v0.1)
+
+Runnable **stub** appliance. Real mechanisms: HTTP gateway, file/env key vault, routing policy, parallel fan-out, discovery registry with polling loop, Docker Compose + healthcheck. Provider adapters return deterministic OpenAI-shaped responses tagged `mirevox.stub: true` until credentials + live SDKs are wired.
+
+| Capability | v0.1 |
+| --- | --- |
+| `POST /v1/chat/completions` | Stub complete + routing metadata |
+| `GET /v1/models` | From discovery registry |
+| `POST /v1/fanout` | Parallel task split (Mirevox extension) |
+| Key vault | File + `SMART_ROUTER_KEY_*` env (volume-mounted in Compose) |
+| Placement policy | Activity → onprem/cloud |
+| Registry poll | Foundry / Bedrock / Vertex / local / MCP stubs |
+| Docker standup | `Dockerfile` + `docker-compose.yml` + healthcheck + `.env.example` |
+| Streaming | Not yet |
+| Live provider SDKs | Deferred |
+| Production security | **Not claimed** — see honest gaps below |
+
+### Honest Docker / production gaps
+
+| Bar | v0.1 |
+| --- | --- |
+| One-command `docker compose up --build` | Supported (defaults; no `.env` required) |
+| Healthcheck | Image `HEALTHCHECK` + Compose healthcheck via Node `fetch` → `/health` |
+| `.env.example` | Present; `.env` gitignored |
+| No secrets in image | Enforced via `.dockerignore` + runtime-only env/volume; default config has a **well-known** `mirevox-dev-key` placeholder only |
+| Non-root container user | `mirevox` user in runtime image |
+| TLS termination / reverse proxy | Not included |
+| Separate client vs admin API keys | Deferred (`H-03`) |
+| Encrypted vault / KMS | Not included (plaintext `0o600` file on volume) |
+| Fail-closed residency `403` | Deferred (`H-01`) |
+| Live multi-replica / HA | Not included |
+| Compose verified on this agent VM | **Unverified here** (no Docker daemon) — verify on a Docker host/CI |
+
+This is an easy **home-lab stub standup**, not a production-hardened gateway.
 
 ## Client setup
 
@@ -80,11 +109,13 @@ src/
   registry/providers.ts Discovery + polling stubs
   backends/stub.ts      Deterministic stub completions
 config/default.yaml
-docs/                   Council artifacts (problem, requirements, architecture, market, DA)
+Dockerfile / docker-compose.yml / .env.example
+docs/                   Council + validation artifacts
 ```
 
 ## Docs
 
+- [Problem statement](docs/problem-statement.md)
 - [Problem & opportunity](docs/problem-opportunity.md)
 - [Requirements (FR/NFR)](docs/requirements.md)
 - [Architecture](docs/architecture.md)
@@ -104,3 +135,7 @@ npm run build && npm start
 ```
 
 Default port `18765` avoids clashing with common 3000/5173/8080 services.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See `LICENSE` in the repository root. `package.json` declares `"license": "Apache-2.0"`.
