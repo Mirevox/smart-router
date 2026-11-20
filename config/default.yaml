@@ -30,7 +30,8 @@ routing:
 # Key vault: file-backed secrets (never commit real keys)
 vault:
   path: "./data/vault.json"
-  # Keys referenced by backend id; values from env SMART_ROUTER_KEY_<NAME> take precedence
+  # Runtime secrets come from KeyVault file + SMART_ROUTER_KEY_<NAME> env (not this YAML list).
+  # `entries` is unused in v0.1 — reserved for a future declarative seed.
   entries: []
 
 # Discovery / polling registry

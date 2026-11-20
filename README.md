@@ -62,7 +62,7 @@ Runnable **stub** appliance. Real mechanisms: HTTP gateway, file/env key vault, 
 | `GET /v1/models` | From discovery registry |
 | `POST /v1/fanout` | Parallel task split (Mirevox extension) |
 | Key vault | File + `SMART_ROUTER_KEY_*` env (volume-mounted in Compose) |
-| Placement policy | Activity → onprem/cloud |
+| Placement policy | Activity → onprem/cloud (**preference only**; no fail-closed `403` yet) |
 | Registry poll | Foundry / Bedrock / Vertex / local / MCP stubs |
 | Docker standup | `Dockerfile` + `docker-compose.yml` + healthcheck + `.env.example` |
 | Streaming | Not yet |
@@ -86,6 +86,15 @@ Runnable **stub** appliance. Real mechanisms: HTTP gateway, file/env key vault, 
 | Compose verified on this agent VM | **Unverified here** (no Docker daemon) — verify on a Docker host/CI |
 
 This is an easy **home-lab stub standup**, not a production-hardened gateway.
+
+### Known v0.1 limitations
+
+- **Placement is preference-only** — explicit cloud models under an `onprem` activity still return `200` (fail-closed `403` is `H-01`).
+- **Vault is plaintext JSON** at `0o600` on the data volume — not KMS/HSM.
+- **One shared `SMART_ROUTER_API_KEY`** unlocks both `/v1/*` and `/admin/*` (`H-03`).
+- **Default bind is `0.0.0.0:18765`** (reachable on all interfaces). Prefer `SMART_ROUTER_HOST=127.0.0.1` for loopback-only demos.
+- **OpenAI subset only** — non-streaming `chat/completions` + `/v1/models`; `stream: true` → `501`; no embeddings/tools yet.
+- **Routing metadata is inline** in response JSON (`mirevox` / `decision.stub`); structured egress logs for `evals` / `data-lineage` are deferred (`H-04`).
 
 ## Client setup
 
@@ -123,10 +132,12 @@ docs/                   Council + validation artifacts
 - [Architecture](docs/architecture.md)
 - [Market gap](docs/market-gap.md)
 - [Devil’s advocate](docs/devils-advocate.md)
+- [Acceptance](docs/acceptance.md)
+- [Test report](docs/test-report.md)
 
 ## Compose with other Mirevox modules
 
-Smart Router is the traffic choke point. Downstream modules should subscribe to request metadata (`backend`, `placement`, `activity`, `stub`) rather than re-integrating each provider. Do not start a full homelab stack from this repo.
+Smart Router is the traffic choke point. In v0.1, routing metadata (`backend`, `placement`, `activity`, `stub`) is returned **inline** on HTTP responses (`mirevox` block / fan-out `decision`). Out-of-process structured egress logging for `evals` / `data-lineage` is deferred (`H-04`). Do not start a full homelab stack from this repo.
 
 ## Development
 

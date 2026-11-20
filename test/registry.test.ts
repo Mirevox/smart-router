@@ -92,7 +92,7 @@ describe("DiscoveryRegistry", () => {
     }
   });
 
-  it("marks a provider live only when stub mode is off and a key is stored", async () => {
+  it("keeps stub:true even when stub mode is off and a key is stored", async () => {
     const previous = process.env.SMART_ROUTER_STUB_MODE;
     process.env.SMART_ROUTER_STUB_MODE = "0";
     const config = loadConfig("./config/default.yaml");
@@ -107,12 +107,13 @@ describe("DiscoveryRegistry", () => {
       const ollama = statuses.find((s) => s.id === "local-ollama");
       const mock = statuses.find((s) => s.id === "mock-openai");
       assert.equal(foundry?.healthy, true);
-      assert.equal(foundry?.stub, false);
+      // v0.1: keys do not flip catalogs to live — STUB_CATALOG only (H-06)
+      assert.equal(foundry?.stub, true);
       assert.equal(ollama?.stub, true);
       assert.equal(mock?.stub, true);
       assert.equal(
         local.listModels().find((m) => m.id === "foundry/gpt-4o")?.stub,
-        false,
+        true,
       );
       assert.equal(JSON.stringify(statuses).includes(canary), false);
     } finally {
