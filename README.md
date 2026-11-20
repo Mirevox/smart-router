@@ -8,9 +8,11 @@ Part of [Mirevox](https://github.com/Mirevox).
 
 ## Problem
 
-Builders mix local models, Foundry / Bedrock / Vertex, MCP servers, and chat UIs — then duplicate API keys across VS Code, a home chatbot, and scripts, with no single place to say “code stays on-prem, chat may use cloud.” Generic proxies unify APIs; they rarely give you an operator-owned inventory, activity-level egress choice, and parallel task fan-out in one Dockerized choke point.
+AI setups rarely use one provider. A home lab or small team may mix local models with Azure AI Foundry, Amazon Bedrock, Google Vertex AI, and MCP tools, while VS Code, chat UIs, and scripts each keep their own endpoints and credentials.
 
-Smart Router is that choke point: one base URL, central keys, declarative on-prem vs cloud policy, discovery polling stubs, and `POST /v1/fanout`.
+Existing gateways already solve the basic “one API for many models” problem. The harder part for a hybrid setup is knowing which resources are actually available, deciding which activities may leave the local network, and making that decision visible and enforceable. Static model lists drift, and a client-selected cloud model can bypass an intended local-only workflow.
+
+Smart Router explores that narrower control-plane problem: one operator-owned inventory, explicit per-activity placement rules, and an OpenAI-shaped entry point that other Mirevox modules can observe. **v0.1 is a contract prototype:** routing, polling, and fan-out machinery run locally, but provider catalogs and completions are stubs, live provider SDKs are not wired, and local-only policy is not yet a fail-closed security boundary.
 
 ## Quick start (Docker)
 

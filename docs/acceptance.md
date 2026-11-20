@@ -21,7 +21,7 @@ Verifier: Gemini acceptance council → orchestrator applied deltas D-01…D-05
 | `npm test` | PASS (see `docs/test-report.md`) |
 | `npm run typecheck` / `npm run build` | PASS |
 | Live `/health` smoke | PASS when server running |
-| Docker Compose boot (`NFR-06`) | **UNVERIFIED** here — no docker daemon; Dockerfile/Compose static review OK; verify on Docker host/CI |
+| Docker Compose boot (`NFR-06`) | **UNVERIFIED** here — no docker daemon; Dockerfile/Compose/healthcheck/`.env.example`/`.dockerignore`/non-root static review OK (validation pass); verify `docker compose up --build` on Docker host/CI |
 
 ## Deferred (documented, not blocking v0.1)
 
