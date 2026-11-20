@@ -1,3 +1,7 @@
+# Mirevox Smart Router — Requirements (draft pending vet lock)
+
+> Source: council gatherer. Devil’s advocate keep/cut applied in architecture honesty boundary; full FR/NFR lock awaits Gemini vetter.
+
 
 # Mirevox Smart Router — Draft Requirements (Runnable v1 Stub)
 
