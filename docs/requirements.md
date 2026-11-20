@@ -1,255 +1,125 @@
-# Mirevox Smart Router — Requirements (draft pending vet lock)
 
-> Source: council gatherer. Devil’s advocate keep/cut applied in architecture honesty boundary; full FR/NFR lock awaits Gemini vetter.
+# Mirevox Smart Router — Vetted Requirements (v0.1 Locked Scope)
 
-
-# Mirevox Smart Router — Draft Requirements (Runnable v1 Stub)
-
-- **Brand:** Mirevox (`https://github.com/Mirevox/smart-router`)
+- **Brand / Repo:** Mirevox (`https://github.com/Mirevox/smart-router`)
 - **License:** Apache-2.0
-- **Stage:** Council Draft (Requirements Gatherer — awaiting Requirements Vetter, Architect, and FR/NFR tightening)
-- **Implementation Stack:** Single stack to be selected by Architect — TypeScript (Fastify/Hono) or Python (FastAPI)
+- **Stage:** Vetted & Locked (v0.1 Runnable Stub)
+- **Implementation Stack:** TypeScript (`strict`), Hono (`@hono/node-server`), Node.js `>= 20`, YAML config (`yaml`), Docker Compose (`node:22-alpine`)
+- **Honest Baseline:** v0.1 is a **Mirevox-owned stub gateway**. Control-plane HTTP routes, bearer auth, file/env key storage, routing policy resolution, parallel task fan-out, and periodic registry polling are implemented for real; upstream provider execution and provider discovery catalogs are deterministic stubs (`stub: true`). The Devil's Advocate recommendation to wrap LiteLLM (or Bifrost) instead of owning a gateway is documented as a **deferred alternative** for v0.2+ backend delegation—v0.1 locks requirements to the shipped Hono stub APIs.
 
 ---
 
-## 1. Scope & Stub Honesty Principle
+## 1. Stub vs. Live Implementation Truth Table
 
-Smart Router v1 is a **runnable stub**: every control-plane mechanism (HTTP gateway, key vault, routing policy engine, parallel task-split fan-out, background polling registry, and structured event emission) is implemented for real and verified end-to-end, while upstream provider connectors (Azure AI Foundry, AWS Bedrock, Google Vertex/Agent Builder, local model runtimes, and MCP servers) operate as **deterministic stub adapters** whenever real credentials or live endpoints are absent.
+No v0.1 document or release note may claim live cloud integration, enterprise KMS security, or full OpenAI parity. Every capability is classified below against the actual codebase at `/home/ubuntu/mirevox/smart-router`.
 
-Stubs must satisfy two honesty rules:
-1. They implement the same internal adapter interface that live SDK/HTTP connectors will use, returning valid OpenAI-shaped responses.
-2. Every stubbed response is explicitly tagged in response metadata/headers (e.g., `X-Mirevox-Mode: stub`) so neither users nor automated tests mistake canned output for a live model call.
-
----
-
-## 2. User Stories, Capabilities & Draft Acceptance Criteria
-
-### 2.1 OpenAI-Compatible Gateway (`REQ-GW`)
-
-**User Story:** As a developer using VS Code, a coding harness, or a home chatbot, I want to point my existing OpenAI-compatible client at one local endpoint so I can access local and cloud models without changing client code.
-
-- **`REQ-GW-01` — Chat Completions Endpoint (`POST /v1/chat/completions`)**
-  - Capability: Accept standard OpenAI chat completion requests (`model`, `messages`, `temperature`, `max_tokens`, `stream`, optional Mirevox routing headers/metadata) and return OpenAI-shaped completion responses.
-  - Draft Acceptance Criteria:
-    - Sending a standard OpenAI SDK or `curl` request to `POST /v1/chat/completions` returns HTTP `200` with valid JSON containing `id`, `object` (`"chat.completion"`), `created`, `model`, `choices[0].message.{role,content}`, `choices[0].finish_reason`, and `usage.{prompt_tokens,completion_tokens,total_tokens}`.
-    - Non-streaming (`stream: false` or omitted) works for both single-route and fan-out requests.
-    - Streaming (`stream: true`) returns `text/event-stream` SSE chunks formatted as `chat.completion.chunk` terminating with `data: [DONE]` for single-backend routes (fan-out streaming behavior is explicitly defined and returns either merged SSE chunks or a documented `400` error if unsupported in v1).
-
-- **`REQ-GW-02` — Model Listing Endpoint (`GET /v1/models`)**
-  - Capability: Expose all currently active models (discovered via polling or onboarded by reference) in the standard OpenAI models list format.
-  - Draft Acceptance Criteria:
-    - `GET /v1/models` returns HTTP `200` with `{"object": "list", "data": [...]}` where each entry includes `id`, `object: "model"`, `created`, and `owned_by`.
-    - Inactive/unhealthy models excluded by the registry do not appear in default listings (or are filterable via query param).
-    - Adding a model via registry onboarding makes it appear in `GET /v1/models` within `<= 1 s` without restarting the gateway.
-
-- **`REQ-GW-03` — Client Authentication & Standard Error Envelope**
-  - Capability: Protect gateway endpoints with configurable client API keys (`Authorization: Bearer <token>`) and return consistent OpenAI-shaped error bodies.
-  - Draft Acceptance Criteria:
-    - When gateway auth is enabled, requests without a valid bearer token return HTTP `401`.
-    - Policy denials return HTTP `403`; invalid payloads return HTTP `400`; unknown models/routes return HTTP `404`; upstream timeouts/errors return HTTP `504`/`502`.
-    - 100% of `4xx`/`5xx` gateway responses match `{"error": {"message": "<string>", "type": "<string>", "code": "<string>"}}`.
-
-- **`REQ-GW-04` — Deterministic Zero-Credential Stub Backends**
-  - Capability: Execute end-to-end routing against built-in stub adapters for Foundry, Bedrock, Vertex, and local runtimes when no live credentials are configured.
-  - Draft Acceptance Criteria:
-    - With zero external API keys configured, `POST /v1/chat/completions` routed to any stubbed provider (`foundry`, `bedrock`, `vertex`, `local`) returns HTTP `200` with a valid OpenAI-shaped response in `< 100 ms` (excluding any test-injected artificial latency).
-    - Stub responses include response header `X-Mirevox-Mode: stub` and deterministic content referencing the resolved provider, model, and activity so automated tests can assert exact routing outcomes.
+| Subsystem | v0.1 Status | Code Surface | What Is Live (Real) | What Is Stubbed or Deferred |
+| --- | --- | --- | --- | --- |
+| **HTTP Gateway & Auth** | **Live** | `src/gateway/openai.ts` | Hono HTTP server on `:18765`, Bearer auth middleware (`SMART_ROUTER_API_KEY`, open-dev mode when empty), unauthenticated `/` and `/health`, OpenAI-style error JSON `{ error: { message, type } }`. | Single shared gateway key for `/v1/*` and `/admin/*` (separate client vs. admin/profile tokens deferred). SSE streaming returns `501` (`stream: true` unsupported in v0.1). |
+| **Chat Completions** | **Stub** | `POST /v1/chat/completions`, `src/backends/stub.ts` | Request presence validation (`model`, `messages`), policy lookup, OpenAI `chat.completion` JSON envelope with inline `mirevox` metadata (`backend`, `placement`, `activity`, `stub`). | `stubComplete()` echoes the last user message with `[mirevox-stub/<backend>]`, approximates tokens (`ceil(chars/4)`), and adds 5–24 ms artificial latency. Zero live HTTP/SDK calls to cloud or Ollama. |
+| **Model Listing** | **Live wrapper / Stub data** | `GET /v1/models`, `src/registry/providers.ts` | Returns OpenAI `{ object: "list", data: [...] }` dynamically aggregated from enabled providers in `DiscoveryRegistry`. | Models are populated from static `STUB_CATALOG` per `ProviderKind` (`foundry`, `bedrock`, `vertex`, `local`, `mcp`, `mock`), each tagged `stub: true`. |
+| **Central Key Vault** | **Live (local file + env)** | `src/vault/key-vault.ts`, `/admin/keys` | Plaintext JSON persistence (`./data/vault.json`, mode `0o600`), clean boot if file missing, env override `SMART_ROUTER_KEY_<BACKEND>` precedence, CRUD API (`GET`/`PUT`/`DELETE /admin/keys`), secret redaction on list (`has_secret: boolean`). | Not an encrypted vault or KMS. Stores a single secret string per entry (non-API-key auth such as AWS SigV4, Google ADC, and Azure Entra is deferred). No secret-canary log scrubber yet. |
+| **Routing Policy** | **Live (preference resolver)** | `src/router/policy.ts`, `GET /admin/routes` | Declarative YAML `activities` (`chat`, `code`, `embed`, `tool`), `default_placement`, prefix-glob `model_routes`, `fallback_backend`, explicit per-request `activity`/`placement`/`backend` overrides, and `onprem` fallback nudge to `local-ollama` for `code`. | **Not yet a fail-closed deny gate**: explicitly requesting a cloud model (e.g., `foundry/gpt-4o`) under an `onprem` activity resolves to `azure-foundry` with `placement: "onprem"` rather than returning `403`. No live upstream retry/fallback loop yet. Hard fail-closed enforcement is a v0.2 gate. |
+| **Task-Split Fan-Out** | **Live orchestration / Stub execution** | `POST /v1/fanout`, `src/fanout/splitter.ts` | Dedicated non-OpenAI endpoint accepting explicit `tasks[]`; bounded worker pool (`fanout.max_parallel`, default `8`); independent per-task `policy.decide()`; per-task timeout race (`timeout_ms`, default `60000`); per-task error isolation; strict input-order preservation. | Subtask execution calls `stubComplete()`. No upper cap on `tasks.length` validation yet (concurrency is capped, not batch length). Timeout `setTimeout` handle is not cleared when a task succeeds before deadline (v0.2 fix). |
+| **Discovery & Polling Registry** | **Live loop / Stub catalogs** | `src/registry/providers.ts`, `/admin/registry`, `/admin/registry/poll` | Config-driven provider list (7 providers across 6 kinds), immediate startup poll + `setInterval` (`poll_interval_ms: 30000`), manual `POST /admin/registry/poll`, status inspection via `GET /admin/registry`. | `pollOne()` reads `STUB_CATALOG[p.kind]` and checks whether a vault secret exists; makes zero live network probes. No runtime `POST`/`DELETE` entry onboarding or staleness eviction in v0.1. |
+| **Health & Lifecycle** | **Live** | `GET /`, `GET /health`, `src/index.ts` | Unauthenticated `/health` returning per-provider `{ id, healthy, stub }`; `SIGINT`/`SIGTERM` cleanly stops registry timer and closes server. | Single `/health` route (no separate `/healthz` + `/readyz`). Structured JSON per-request egress audit logging and `X-Mirevox-*` HTTP response headers are deferred to v0.2. |
+| **Packaging & Ops** | **Live** | `Dockerfile`, `docker-compose.yml`, `config/default.yaml`, `.env.example` | Multi-stage `node:22-alpine` build, single-service Compose on `:18765`, persistent `router-data` volume, `wget` healthcheck, zero cloud credentials required. | No standalone `./scripts/acceptance.sh` bundled yet (`npm test` + `npm run typecheck` + `docker compose up` form the v0.1 verification suite). |
 
 ---
 
-### 2.2 Central Key Vault (`REQ-KV`)
+## 2. Vapor & Over-Specification Cut from `requirements-draft.md`
 
-**User Story:** As an operator, I want to store all upstream provider keys in one place inside Smart Router so my IDE, chatbot, and scripts never hold provider secrets.
+The requirements draft (`requirements-draft.md`) specified several features that are either absent in the shipped v0.1 code, premature for a stub contract, or rejected by adversarial review. All items below are explicitly **cut or narrowed** out of the v0.1 lock:
 
-- **`REQ-KV-01` — File & Environment-Backed Key Store**
-  - Capability: Load provider credentials (Foundry, Bedrock, Vertex, local auth tokens, MCP tokens) and gateway client keys from a local vault file (JSON/YAML) with environment-variable overrides.
-  - Draft Acceptance Criteria:
-    - Vault resolves credentials in deterministic precedence order: environment variable override > local vault file > unconfigured (triggers stub fallback where allowed).
-    - Rotating a provider key in the vault file or env config requires zero changes to any downstream client configuration.
-    - Missing vault file on first boot does not crash the router; it boots cleanly in stub mode and logs a clear startup notice.
-
-- **`REQ-KV-02` — Secret Isolation & Zero-Leak Redaction**
-  - Capability: Prevent upstream API keys and tokens from ever appearing in HTTP responses, error payloads, registry endpoints, or logs.
-  - Draft Acceptance Criteria:
-    - Automated test suite injects canary secret values into every vault slot, exercises success, `4xx`, `5xx`, timeout, and debug-log paths, and asserts `0` occurrences of any raw canary string across all response bodies, response headers, and stdout/stderr logs.
-
-- **`REQ-KV-03` — Key Status Inspection Without Secret Exposure**
-  - Capability: Allow operators to verify which providers have configured credentials vs. running in stub mode.
-  - Draft Acceptance Criteria:
-    - Admin status endpoint (e.g., `GET /v1/vault/status`) returns per-provider status (`configured | missing`), source (`env | file | none`), and masked identifier (e.g., last 4 characters or `"not-set"`), and never returns raw key material.
-    - Admin endpoints require an admin bearer token (or loopback-only binding when configured).
-
-- **`REQ-KV-04` — Pluggable Vault Adapter Boundary**
-  - Capability: Isolate secret retrieval behind a single internal `KeyVault` interface.
-  - Draft Acceptance Criteria:
-    - No gateway handler, policy rule, or provider adapter reads `process.env` / `os.environ` directly for provider secrets; 100% of secret lookups go through the vault interface so future KMS adapters (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) can be added without modifying callers.
+| Draft Requirement | Disposition | Reason & Locked v0.1 Reality |
+| --- | --- | --- |
+| `REQ-GW-01` SSE streaming (`stream: true`) | **Cut from v0.1** | Shipped gateway explicitly rejects `stream: true` with HTTP `501` (`"streaming not implemented in v0.1 stub"`). Re-open only when live adapters land. |
+| `REQ-GW-03` `403`/`404`/`502`/`504` full OpenAI error taxonomy + `error.code` field | **Narrowed** | Shipped error envelope is `{ error: { message, type } }` covering `400`, `401`, `501`, `500`. `403`/`404`/`502`/`504` apply once fail-closed policy and live upstream HTTP adapters exist. |
+| `REQ-KV-03` `/v1/vault/status` + separate admin token + masked last-4 | **Narrowed to shipped API** | Shipped endpoints are `GET /admin/keys`, `PUT /admin/keys/:id`, `DELETE /admin/keys/:id` returning `{ id, backend, updated_at, has_secret }`. Separate admin/client auth tokens are deferred to v0.2. |
+| `REQ-RT-01/02/03` Fail-closed `503`/`403` outage rejection, ordered live fallback, `X-Mirevox-Activity` header | **Narrowed to shipped API; fail-closed deferred to v0.2** | Shipped v0.1 reads `activity`, `placement`, and `backend` from the JSON request body and resolves policy deterministically via `RoutingPolicy.decide()`. Hard-deny `403` enforcement and ordered retry/fallback are promoted to mandatory v0.2 hardening gates. |
+| `REQ-RT-04` Six `X-Mirevox-*` HTTP response headers | **Cut from v0.1** | Routing provenance is returned inline in `mirevox: { backend, placement, activity, stub }` on completions and `decision` on fan-out results. Header mirroring deferred to v0.2. |
+| `REQ-FS-01/02/03/04` Implicit splitting on `/v1/chat/completions`, `mirevox_tasks`, `require_all` mode, merged prose essay | **Cut; replaced by `/v1/fanout`** | Per Devil's Advocate, overloading `/v1/chat/completions` breaks standard OpenAI clients. v0.1 isolates explicit caller-supplied fan-out on `POST /v1/fanout` returning structured `mirevox.fanout_result`. |
+| `REQ-REG-01/02/03/04` Live local-Ollama HTTP import, workflow-by-reference URLs, staleness eviction, runtime `POST/DELETE /v1/registry/entries` | **Cut from v0.1** | Static config-driven provider catalog in `config/default.yaml` + stub `pollAll()` avoids SSRF/RCE risks and unreviewed auto-onboarding. Live read-only discovery with human allowlist is deferred to v0.2+. |
+| `REQ-OBS-01/02` Structured JSON audit event log + separate `/healthz` and `/readyz` | **Narrowed** | v0.1 ships unauthenticated `GET /health` with provider status summary. Structured JSON egress log (for sibling `evals` and `data-lineage` modules) is deferred to v0.2. |
+| Vault encryption (`AES-256-GCM` passphrase in env) | **Permanently cut** | Passphrase in the same env file is security theater (per DA). Keep honest `0o600` local file + env until a real KMS/secret manager adapter is added. |
+| n8n, Instagram, Sherali homelab, Web UI, bundled evals/lineage, billing/RBAC | **Permanently out of scope** | Belongs outside this repository. |
 
 ---
 
-### 2.3 Routing Policy: On-Prem vs. Cloud per Activity (`REQ-RT`)
+## 3. Disposition of Devil's Advocate (`devils-advocate.md`)
 
-**User Story:** As a privacy-conscious builder, I want to declare routing rules by activity so sensitive work stays strictly on-prem while general work can use cloud models.
+Devil's Advocate challenged the entire brief and recommended wrapping a pinned LiteLLM (or Bifrost) proxy instead of building a custom gateway. Below is the explicit council resolution for every challenge.
 
-- **`REQ-RT-01` — Declarative Activity-Based Policy Config**
-  - Capability: Load routing rules from a versioned YAML/JSON policy file mapping an activity (supplied via header `X-Mirevox-Activity`, model alias, or default fallback) to target locality (`on-prem`, `cloud`, `hybrid`), ordered provider/model targets, and fallback flags.
-  - Draft Acceptance Criteria:
-    - At least 3 distinct activities (e.g., `private-code`, `general-chat`, `research-hybrid`) can be configured in a single policy file and resolved deterministically at runtime.
-    - Invalid policy files fail fast on startup with a human-readable validation error citing the offending rule and field (exit code non-zero).
+### Strategic Decision: Owned Hono Stub vs. LiteLLM Wrap
 
-- **`REQ-RT-02` — Fail-Closed On-Prem Residency Enforcement**
-  - Capability: Guarantee that activities pinned to `on-prem` never spill over to cloud providers when local backends are unavailable.
-  - Draft Acceptance Criteria:
-    - For any rule with `locality: on-prem` and `allow_cloud_fallback: false` (default for `on-prem` rules), if all eligible local targets are unhealthy, timed out, or unconfigured, the router returns HTTP `503` (or `403` when an explicit cloud model is requested under an `on-prem` activity) and dispatches `0` outbound requests to any cloud adapter.
-    - Verified by automated negative test simulating local backend outage while healthy cloud adapters are available.
+- **Devil's Advocate position:** Do not write an original Fastify/Hono/FastAPI proxy; ship a Docker Compose profile around pinned LiteLLM (or Bifrost) with a small policy check and log filter.
+- **Council decision:** **Lock v0.1 to the shipped Hono TypeScript stub gateway; record LiteLLM/Bifrost wrapping as an explicit deferred alternative for v0.2+.**
+- **Why:**
+  1. The Hono stub already exists (~450 LOC across 8 files, zero external dependencies beyond `hono`, `@hono/node-server`, `yaml`, `zod`) and passes 12 automated tests cleanly with `tsc --noEmit`.
+  2. Owning the thin control-plane front door keeps Mirevox's exact extension contracts (`POST /v1/fanout`, `/admin/*`, activity placement config) composable and independent of LiteLLM's Python runtime and config churn.
+  3. **Crucial honesty concession:** Mirevox will **not** rewrite provider SDK normalization for 50+ clouds. When moving from v0.1 stubs to live execution in v0.2+, delegating cloud calls downstream to LiteLLM, Bifrost, or a narrow set of native adapters behind `src/backends/` remains the preferred integration path.
 
-- **`REQ-RT-03` — Ordered Fallback Within Permitted Locality**
-  - Capability: Automatically fall back across ordered targets permitted by the matched rule when a primary backend fails or times out.
-  - Draft Acceptance Criteria:
-    - Given a `cloud` or `hybrid` rule with `[primary, secondary]`, simulating a `500` or timeout on `primary` causes the router to succeed via `secondary` on the same client request, recording both attempts in routing telemetry.
-    - Fallback never crosses a forbidden locality boundary (e.g., `on-prem`-only rules never fall back to `cloud`).
+### Point-by-Point Keep / Cut / Defer Table
 
-- **`REQ-RT-04` — Non-Intrusive Routing Transparency Headers**
-  - Capability: Surface routing decisions on every response without breaking OpenAI client compatibility.
-  - Draft Acceptance Criteria:
-    - Every completion response includes HTTP headers: `X-Mirevox-Request-Id`, `X-Mirevox-Activity`, `X-Mirevox-Route-Locality` (`on-prem | cloud | mixed`), `X-Mirevox-Provider`, `X-Mirevox-Policy-Rule`, and `X-Mirevox-Mode` (`stub | live`).
-    - Standard OpenAI SDK clients parse the response body without errors or warnings.
-
----
-
-### 2.4 Task-Split Fan-Out Across Backends (`REQ-FS`)
-
-**User Story:** As a user sending a multi-part request, I want Smart Router to split the work and execute subtasks in parallel across appropriate backends/toolsets, then combine the results into one response.
-
-- **`REQ-FS-01` — Parallel Subtask Decomposition & Dispatch**
-  - Capability: Detect multi-part fan-out requests (via an explicit structured extension field such as `mirevox_tasks: [{id, prompt, activity?, model?}]` or a configured fan-out model/header trigger) and dispatch subtasks concurrently across resolved backends.
-  - Draft Acceptance Criteria:
-    - A fan-out request containing `N = 3` subtasks targeting stub backends each configured with an artificial delay of `d = 150 ms` completes in `< 250 ms` total wall-clock time (strictly `< 1.7 * d` vs. `450 ms` sequential), proving parallel execution.
-    - Each subtask executes against its own resolved provider/model according to routing policy.
-
-- **`REQ-FS-02` — Independent Per-Subtask Policy Enforcement**
-  - Capability: Evaluate routing policy independently for each subtask in a fan-out batch.
-  - Draft Acceptance Criteria:
-    - A single fan-out request containing one subtask tagged `activity: private-code` (`on-prem`) and one subtask tagged `activity: general-chat` (`cloud`) routes the first exclusively to a local backend and the second to a cloud backend; response header reports `X-Mirevox-Route-Locality: mixed`.
-    - If the `on-prem` subtask's local backend is unavailable, it fails closed without leaking to cloud, even while the `cloud` subtask succeeds.
-
-- **`REQ-FS-03` — Result Aggregation & Partial-Failure Resilience**
-  - Capability: Merge subtask outputs into a single OpenAI-compatible `chat.completion` response while handling individual subtask failures and timeouts cleanly.
-  - Draft Acceptance Criteria:
-    - When all `N` subtasks succeed, the merged `choices[0].message.content` includes all `N` labeled subtask outputs in deterministic input order, and `usage` aggregates token counts across subtasks.
-    - When `1` of `N` subtasks fails or exceeds `subtask_timeout_ms` under default `partial_ok` mode, the gateway still returns HTTP `200` within `total_timeout_ms` with the `N - 1` succeeded outputs plus an explicit error marker for the failed subtask (and a structured `mirevox_fanout` summary or trace header).
-    - Under `require_all` mode, any subtask failure returns an OpenAI-shaped `502`/`504` error naming the failed subtask ID.
-
-- **`REQ-FS-04` — Fan-Out Guardrails**
-  - Capability: Bound concurrency and latency to prevent runaway fan-out.
-  - Draft Acceptance Criteria:
-    - Configurable `max_subtasks` (default `5`), `subtask_timeout_ms` (default `5000`), and `total_timeout_ms` (default `10000`).
-    - Requests containing `> max_subtasks` subtasks are rejected before dispatch with HTTP `400` and `0` upstream calls made.
-
----
-
-### 2.5 Discovery, Polling & By-Reference Registry (`REQ-REG`)
-
-**User Story:** As an operator, I want Smart Router to auto-discover models and MCP servers across my cloud accounts and local machines via polling, and let me onboard any model, MCP, or external workflow by reference without copying its code into the router.
-
-- **`REQ-REG-01` — Unified Typed Registry Catalog**
-  - Capability: Maintain an in-memory (optionally file-persisted) registry of three resource types: `model`, `mcp`, and `workflow`.
-  - Draft Acceptance Criteria:
-    - Every registry entry stores: `id`, `kind` (`model | mcp | workflow`), `provider` (`foundry | bedrock | vertex | local | mcp | external`), `locality` (`on-prem | cloud`), `reference_uri`, `source` (`polled | manual`), `status` (`active | degraded | unavailable`), `capabilities` (tags/metadata), and `last_seen_at` (ISO-8601).
-    - `GET /v1/registry` returns all entries with optional query filters (`kind`, `provider`, `locality`, `status`).
-
-- **`REQ-REG-02` — Discovery & Polling Adapters for All 5 Ecosystems**
-  - Capability: Provide background polling adapters behind a common `DiscoveryAdapter` interface for: (1) Azure AI Foundry, (2) AWS Bedrock, (3) Google Vertex / Agent Builder, (4) Local model runtimes (e.g., Ollama / OpenAI-compatible local URL), and (5) MCP servers.
-  - Draft Acceptance Criteria:
-    - Each of the 5 pollers runs on a configurable interval (`poll_interval_sec`, plus manual trigger `POST /v1/registry/poll` for fast testing).
-    - When real credentials/endpoints are absent, each poller runs in deterministic stub mode and seeds at least `1` representative catalog entry (e.g., Foundry model, Bedrock model, Vertex model, local model, and stub MCP server with tool metadata).
-    - For the `local` adapter, pointing it at a reachable mock/real HTTP server (e.g., OpenAI `/v1/models` or Ollama `/api/tags` shape) dynamically imports returned models without stub data.
-
-- **`REQ-REG-03` — Auto-Onboarding & Staleness Eviction**
-  - Capability: Automatically onboard newly discovered items and demote entries that vanish or fail consecutive polls.
-  - Draft Acceptance Criteria:
-    - When a mock discovery source adds a new model or MCP server, it appears in `GET /v1/registry` (and `GET /v1/models` if `kind=model`) within `1` poll cycle (or immediately upon `POST /v1/registry/poll`) with zero restart.
-    - When a previously discovered entry disappears or fails `K` consecutive polls (default `K = 2`), its status transitions to `unavailable` and the router excludes it from routing eligibility.
-
-- **`REQ-REG-04` — Manual Onboarding & Removal by Reference**
-  - Capability: Onboard any model, MCP server, or external workflow/UI by reference via config file or admin REST API.
-  - Draft Acceptance Criteria:
-    - `POST /v1/registry/entries` accepts a valid `model`, `mcp`, or `workflow` reference (including external UI/workflow URLs) and returns HTTP `201`; the entry is immediately queryable via `GET /v1/registry`.
-    - `DELETE /v1/registry/entries/:id` removes the manual entry (HTTP `200`/`204`) and excludes it from subsequent routing/listings.
-    - Manual entries are never overwritten or evicted by background pollers.
-
----
-
-### 2.6 Control-Plane Observability & Mirevox Composability (`REQ-OBS`)
-
-**User Story:** As the maintainer of sibling Mirevox modules (`evals` and `data-lineage`), I want Smart Router to emit clean routing/egress events and health signals so external modules can attach without modifying router internals.
-
-- **`REQ-OBS-01` — Structured Routing & Egress Audit Log**
-  - Capability: Emit one structured JSON event per handled request and per fan-out subtask.
-  - Draft Acceptance Criteria:
-    - Each JSON log/event record includes: `event_type`, `request_id`, `parent_request_id` (for subtasks), `timestamp`, `activity`, `policy_rule`, `locality`, `provider`, `model`, `mode` (`stub | live`), `status_code`, `latency_ms`, and `token_usage`.
-    - Prompt/response payload capture is disabled or explicitly opt-in by config flag (`log_payloads: false` default) to protect sensitive on-prem content.
-    - Zero raw secrets appear in any event record.
-
-- **`REQ-OBS-02` — Health & Readiness Endpoints**
-  - Capability: Provide container-friendly liveness and readiness probes.
-  - Draft Acceptance Criteria:
-    - `GET /healthz` returns HTTP `200` with `{"status": "ok"}` in `< 50 ms`.
-    - `GET /readyz` returns HTTP `200` when policy is loaded and at least one initial discovery pass has completed, including per-poller status (`last_poll_at`, `mode`, `entry_count`, `last_error`).
-
----
-
-### 2.7 Packaging, Local Run & Docker Compose (`REQ-OPS`)
-
-**User Story:** As a first-time user, I want to clone the repo and run `docker compose up` to try the complete Smart Router flow in under a minute without signing up for cloud accounts.
-
-- **`REQ-OPS-01` — Zero-Credential Docker Compose Quickstart**
-  - Capability: Ship a `Dockerfile`, `docker-compose.yml`, example policy/vault configs, and an automated smoke verification script.
-  - Draft Acceptance Criteria:
-    - From a fresh checkout with zero `.env` cloud keys, `docker compose up --build -d` brings the service to healthy (`/readyz` = `200`) within `< 30 s` on a standard dev VM.
-    - Running the repository smoke script against the running container verifies: `/healthz`, `/readyz`, `/v1/models`, `on-prem` vs. `cloud` routing, fail-closed `on-prem` rejection, parallel task-split fan-out, and registry polling/manual onboarding—all exiting `0`.
-    - No external services (no n8n, no Instagram, no database cluster, no homelab stack) are required to boot or pass tests.
-
-- **`REQ-OPS-02` — Modular Code Layout & Open-Source Hygiene**
-  - Capability: Structure the codebase into clear, testable modules with Apache-2.0 licensing and honest documentation.
-  - Draft Acceptance Criteria:
-    - Repository contains `LICENSE` (Apache-2.0), `README.md` (with quickstart, curl examples, stub vs. live explanation, and Mirevox module composition diagram/notes), and cleanly separated internal modules: `gateway`, `vault`, `policy`, `fanout`, `registry` (with 5 poller adapters), and `providers` (with stub adapters).
-    - Unit and integration test suites run via a single documented command with `0` external network dependencies.
-
----
-
-## 3. Explicit Non-Goals (Out of Scope for v1)
-
-| Excluded Area | Why Deferred |
-| --- | --- |
-| n8n / Instagram workflows | Explicit product boundary; unrelated to core router slice. |
-| Full Sherali / homelab stack deployment | Memory and coupling constraint; v1 ships standalone Docker Compose. |
-| Mandatory live cloud SDK integrations | v1 proves control-plane contracts via deterministic stub adapters; live SDK connectors plug into the same adapter interface in v1.1+. |
-| Enterprise KMS / HSM (Vault, AWS KMS, Azure Key Vault) | Local file/env vault behind a `KeyVault` interface is sufficient for v1. |
-| Built-in Web UI / Admin Dashboard | Separate concern; REST APIs + Mirevox showcase/modules own UI. |
-| Bundled Evals or Data-Lineage engines | Separate Mirevox modules (`evals`, `data-lineage`) consuming router events. |
-| Billing, rate-limit quotas, multi-tenant RBAC | Post-v1 operational hardening once core routing and fan-out stabilize. |
-| Custom model hosting or Terraform cloud provisioning | Explicitly deprioritized in Mirevox product synthesis. |
-
----
-
-## 4. Draft Verification Matrix
-
-| Area | IDs | Verification Method | Measurable Exit Gate |
+| DA Item | DA Verdict | Council v0.1 Verdict | Rationale & Guardrail |
 | --- | --- | --- | --- |
-| Gateway | `REQ-GW-01..04` | Integration tests + OpenAI client check | Valid OpenAI JSON/SSE; `401/403/400/404/502/504` envelopes; `< 100 ms` stub latency |
-| Key Vault | `REQ-KV-01..04` | Unit + canary leak scan | Precedence works; `0` raw canary leaks in logs/responses/errors |
-| Routing Policy | `REQ-RT-01..04` | Unit + outage simulation | `0` cloud egress on failed `on-prem` rule; ordered fallback succeeds within boundary |
-| Task-Split Fan-Out | `REQ-FS-01..04` | Concurrency timing + fault injection | `N = 3` at `d = 150 ms` finishes `< 250 ms`; mixed locality enforced; `partial_ok` & `max_subtasks` enforced |
-| Registry & Polling | `REQ-REG-01..04` | Poller unit + mock HTTP integration | All 5 ecosystems seeded; dynamic add/evict works in `1..K` polls; manual CRUD works |
-| Observability | `REQ-OBS-01..02` | Log schema validation + probe tests | Valid JSON audit events with `0` secrets; `/healthz` `< 50 ms`, `/readyz` reports all pollers |
-| Packaging | `REQ-OPS-01..02` | Clean Docker Compose smoke test | Zero-key boot `< 30 s`; full smoke script exits `0`; offline test suite exits `0` |
+| Pinned LiteLLM / Bifrost wrapper as sole proxy | Keep | **Deferred alternative (v0.2+)** | Documented in `architecture.md` as a downstream backend option; v0.1 locks to the shipped Hono stub APIs. |
+| Original Hono TypeScript gateway | Cut | **Keep (locked v0.1)** | Already built, tiny, Apache-2.0, tested offline. Must stay honest about stub status. |
+| Implicit task-split fan-out inside `/v1/chat/completions` | Cut | **Cut (agreed)** | `/v1/chat/completions` stays single-route OpenAI shape; fan-out lives strictly on `POST /v1/fanout`. |
+| Explicit caller-supplied fan-out endpoint | Defer | **Keep on `POST /v1/fanout`** | Already shipped with bounded worker pool, per-task timeouts, per-task error status, and deterministic input ordering. |
+| Workflow-by-reference URL fetch & MCP stdio execution | Cut | **Cut (agreed)** | Eliminates SSRF and RCE attack surface. MCP is a static stub catalog entry only. |
+| Auto-onboard anything a poller discovers into live routes | Cut | **Cut (agreed)** | Providers are declared statically in `config/default.yaml`; no unreviewed dynamic route injection. |
+| Stub discovery registry for Foundry, Bedrock, Vertex, local, MCP | Cut | **Keep as labeled stub** | Already shipped in `src/registry/providers.ts`. Every row explicitly sets `stub: true` so nothing claims live cloud support. |
+| Key vault encryption theater / UI / KMS / virtual keys | Cut | **Cut (agreed)** | `KeyVault` stays a minimal `0o600` JSON file + `SMART_ROUTER_KEY_*` env store with redacted `/admin/keys` listing; no fake encryption. |
+| Fail-closed `onprem` deny (`403`) + zero cloud hits | Keep | **Defer to v0.2 P0 gate** | Not yet enforced in `src/router/policy.ts`; explicitly tracked as the #1 v0.2 hardening requirement so v0.1 makes no false residency claim. |
+| Distinct client vs. admin bearer tokens (VS Code vs. chatbot profiles) | Keep | **Defer to v0.2** | v0.1 uses one `SMART_ROUTER_API_KEY`; documented as a single-operator local-dev boundary. |
+| Structured JSON egress log (no prompt/response bodies, canary scrub) | Keep | **Defer to v0.2** | Needed before wiring Mirevox `evals` and `data-lineage` subscribers. |
+| Live cloud SDKs (Foundry, Bedrock, Vertex, Agent runtimes) | Cut / Defer | **Cut from v0.1 / Defer** | Zero live cloud calls in v0.1; Agent runtimes (threads/tools) remain out of scope for chat completions. |
+| n8n, Instagram, Sherali homelab, VS Code ext, chatbot | Cut | **Cut (agreed)** | Explicitly listed under "Not in this repo". |
 
 ---
 
-## 5. Open Decisions & Risks for Council Review
+## 4. Tightened Acceptance Criteria (Locked to Shipped v0.1 APIs)
 
-1. **Stack Selection (Architect):** Fastify/Hono (TypeScript) vs. FastAPI (Python). Key evaluation factors: SSE streaming ergonomics, lightweight async fan-out, Docker image size, and contributor accessibility.
-2. **Task-Split Trigger Ergonomics (Vetter + Architect):** Explicit JSON field (`mirevox_tasks`) is unambiguous and easy to test, whereas prompt-based splitting (e.g., splitting numbered sub-prompts via a deterministic rule) allows unmodified chat UIs to trigger fan-out. Recommend confirming whether v1 supports both (explicit field + opt-in deterministic prompt splitter) or explicit-only first.
-3. **Streaming Under Fan-Out (Vetter + Architect):** Merging concurrent streams into a single OpenAI SSE response adds complexity. Recommend deciding whether v1 buffers and emits final merged SSE chunks or returns `400` when `stream: true` is combined with fan-out.
-4. **Vault File Security Baseline (Vetter + Devil's Advocate):** Should v1 support optional symmetric encryption (e.g., `MIREVOX_VAULT_MASTER_KEY` + AES-256-GCM) or strictly plaintext JSON/YAML with file-mode warnings + env overrides? Decide the cleanest honest baseline that does not create false security theater.
-5. **MCP Execution vs. Discovery Scope (Devil's Advocate):** Clarify whether v1 fan-out can invoke a stubbed MCP tool reference alongside model subtasks, or whether MCP in v1 is strictly discovery/registry + reference lookup (with tool execution stubbed as a subtask target).
+Every criterion below maps directly to an implemented v0.1 endpoint or module and is classified `[LIVE]` or `[STUB]`.
+
+### 4.1 Gateway & Auth (`AC-GW`)
+- **`AC-GW-01` `[LIVE]` Auth Gate:** Requests to `/v1/*` and `/admin/*` without `Authorization: Bearer <config.gateway.api_key>` return HTTP `401` with `{"error":{"message":"Invalid API key","type":"invalid_request_error"}}`. `GET /` and `GET /health` succeed (`200`) without auth. When `gateway.api_key` is empty (`""`), requests pass in open local-dev mode. *(Verified by `test/gateway.test.ts`: "rejects missing api key".)*
+- **`AC-GW-02` `[LIVE]` Service & Health Probes:** `GET /` returns `200` with `{ name: "mirevox-smart-router", version: "0.1.0", openai_base: "/v1", docs }`. `GET /health` returns `200` with `{ status: "ok", providers: [{ id, healthy, stub }] }`.
+- **`AC-GW-03` `[STUB]` Chat Completions Contract:** `POST /v1/chat/completions` with valid `model` and `messages[]` returns `200` with OpenAI-shaped `id` (`chatcmpl_*`), `object: "chat.completion"`, `created`, `model`, `choices[0].message.{role:"assistant", content}`, `choices[0].finish_reason: "stop"`, `usage.{prompt_tokens, completion_tokens, total_tokens}`, and `mirevox.{backend, placement, activity, stub: true}`. Content echoes the last user message prefixed with `[mirevox-stub/<backend>]`. *(Verified by `test/gateway.test.ts`: "completes chat with routing metadata".)*
+- **`AC-GW-04` `[LIVE]` Payload Validation & Streaming Rejection:** `POST /v1/chat/completions` missing `model` or non-array `messages` returns `400`. Sending `stream: true` returns `501` with `"streaming not implemented in v0.1 stub"`.
+- **`AC-GW-05` `[STUB]` Model Listing:** `GET /v1/models` with valid bearer returns `200` with `{ object: "list", data: DiscoveredModel[] }` containing models from all enabled providers (`azure-foundry`, `aws-bedrock`, `google-vertex`, `local-ollama`, `mcp-bridge`, `mock-openai`, `mock-anthropic`), each carrying `id`, `object: "model"`, `created`, `owned_by`, `backend`, `placement`, and `stub: true`. *(Verified by `test/gateway.test.ts`: "lists models".)*
+
+### 4.2 Central Key Vault (`AC-KV`)
+- **`AC-KV-01` `[LIVE]` File + Env Precedence:** `KeyVault.getSecret(backend)` checks `process.env["SMART_ROUTER_KEY_<BACKEND_UPPER_UNDERSCORE>"]` first, falling back to the JSON vault file (`config.vault.path`, default `./data/vault.json`). Missing vault file initializes cleanly to `{ version: 1, entries: [] }` without error.
+- **`AC-KV-02` `[LIVE]` Secret Redaction & File Mode:** `PUT /admin/keys/:id` persists `{ id, backend, secret, updated_at }` with file mode `0o600` and returns `{ id, backend, updated_at, has_secret: true }` (no `secret` field). `GET /admin/keys` returns `{ data: [{ id, backend, updated_at, has_secret }] }` with zero raw `secret` properties. `DELETE /admin/keys/:id` returns `{ deleted: boolean }`. *(Verified by `test/vault.test.ts` and `test/gateway.test.ts`: "stores vault keys".)*
+- **`AC-KV-03` `[LIVE]` Input Validation:** `PUT /admin/keys/:id` missing `backend` or `secret` returns `400`.
+
+### 4.3 Routing Policy (`AC-RT`)
+- **`AC-RT-01` `[LIVE]` Activity Placement Resolution:** `RoutingPolicy.decide()` resolves placement in order: explicit `placement` override > `routing.activities[activity]` (`chat: cloud`, `code: onprem`, `embed: cloud`, `tool: onprem`) > `routing.default_placement` (`cloud`), defaulting omitted `activity` to `"chat"`. *(Verified by `test/policy.test.ts`.)*
+- **`AC-RT-02` `[LIVE]` Model-Route Pattern Matching:** `resolveBackend()` honors explicit `backend` override > prefix-glob matches in `routing.model_routes` (`gpt-*`, `claude-*`, `local/*`, `foundry/*`, `bedrock/*`, `vertex/*`, `mcp/*`) > `routing.fallback_backend` (`mock-openai`). When `placement === "onprem"`, `activity === "code"`, no explicit `backend` override is supplied, and the model falls through to `fallback_backend` without a `/` prefix, the decision nudges `backend` to the first enabled `local` provider (`local-ollama`). *(Verified by `test/policy.test.ts`.)*
+- **`AC-RT-03` `[LIVE]` Route Inspection:** `GET /admin/routes` returns `200` with `{ routing, sample }` containing the loaded `routing` config and three evaluated sample decisions.
+
+### 4.4 Parallel Task-Split Fan-Out (`AC-FO`)
+- **`AC-FO-01` `[LIVE/STUB]` Explicit Parallel Dispatch:** `POST /v1/fanout` accepts `{ tasks: FanoutTask[], timeout_ms? }` (rejects empty/missing `tasks` with `400`), executes tasks across a worker pool bounded by `min(max(1, fanout.max_parallel), tasks.length)`, evaluates `RoutingPolicy.decide()` independently per task, and returns `200` with `{ object: "mirevox.fanout_result", parallel, results }`. *(Verified by `test/fanout.test.ts`.)*
+- **`AC-FO-02` `[LIVE]` Deterministic Ordering & Fault Isolation:** `results[]` preserves the exact input order of `tasks[]` by `task.id`. Any task exceeding `timeout_ms` (default `60000`) or throwing an error yields `{ id, ok: false, decision, error, duration_ms }` without failing sibling tasks.
+
+### 4.5 Discovery & Polling Registry (`AC-REG`)
+- **`AC-REG-01` `[STUB]` Startup & On-Demand Polling:** `DiscoveryRegistry.start()` runs an initial `pollAll()` and schedules periodic polling every `registry.poll_interval_ms` (`30000 ms`, timer `.unref()`'d). `POST /admin/registry/poll` executes `pollAll()` immediately and returns `{ data: ProviderStatus[] }`. `GET /admin/registry` returns current statuses for all configured providers.
+- **`AC-REG-02` `[STUB]` Honest Stub Marking:** In default mode (`SMART_ROUTER_STUB_MODE` unset or `"true"`), or whenever a polled provider has no secret in `KeyVault`, its `ProviderStatus.stub` and exported `DiscoveredModel.stub` are `true`. Zero outbound network calls are made during polling.
+
+### 4.6 Packaging & Verification (`AC-OPS`)
+- **`AC-OPS-01` `[LIVE]` Offline Test & Typecheck Gate:** From a clean checkout with zero cloud credentials, `npm run typecheck` and `npm test` (12 tests across 4 suites) exit `0`.
+- **`AC-OPS-02` `[LIVE]` Zero-Credential Docker Compose Boot:** `docker compose up --build -d` builds the `node:22-alpine` image, starts `smart-router` on port `18765`, and passes the container healthcheck (`GET http://127.0.0.1:18765/health` = `200`) within 30 seconds with no external services or API keys.
+
+---
+
+## 5. Explicit Non-Goals (Not in v0.1 Repo)
+
+- Live cloud inference adapters (Azure AI Foundry, AWS Bedrock, Google Vertex, Ollama) and downstream LiteLLM delegation (v0.2+).
+- Fail-closed `403` residency enforcement on explicit cloud-model overrides under `onprem` activities (v0.2 P0 gate).
+- SSE streaming (`stream: true`), embeddings, multimodal inputs, and tool-call execution.
+- MCP runtime brokering (stdio/HTTP tool invocation) and workflow-by-reference URL fetching.
+- Separate client/admin bearer profiles, virtual keys, budgets, spend dashboards, KMS/HSM encryption, or Web UI.
+- Structured JSON egress audit streaming to Mirevox `evals` / `data-lineage` (v0.2).
+- n8n, Instagram, or full Sherali homelab stack orchestration.
