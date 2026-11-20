@@ -1,0 +1,77 @@
+# Mirevox Smart Router — default config (override with SMART_ROUTER_CONFIG or env)
+server:
+  host: "0.0.0.0"
+  port: 18765
+
+# Gateway auth: clients present this as Bearer token (or leave empty for local-dev open mode)
+gateway:
+  api_key: "mirevox-dev-key"
+
+# Routing policy: choose on-prem vs cloud per activity tag
+routing:
+  default_placement: "cloud" # cloud | onprem
+  # activity → placement overrides
+  activities:
+    chat: "cloud"
+    code: "onprem"
+    embed: "cloud"
+    tool: "onprem"
+  # model id / prefix → backend id
+  model_routes:
+    "gpt-*": "mock-openai"
+    "claude-*": "mock-anthropic"
+    "local/*": "local-ollama"
+    "foundry/*": "azure-foundry"
+    "bedrock/*": "aws-bedrock"
+    "vertex/*": "google-vertex"
+    "mcp/*": "mcp-bridge"
+  fallback_backend: "mock-openai"
+
+# Key vault: file-backed secrets (never commit real keys)
+vault:
+  path: "./data/vault.json"
+  # Keys referenced by backend id; values from env SMART_ROUTER_KEY_<NAME> take precedence
+  entries: []
+
+# Discovery / polling registry
+registry:
+  poll_interval_ms: 30000
+  providers:
+    - id: azure-foundry
+      kind: foundry
+      enabled: true
+      endpoint: "https://example.openai.azure.com"
+      poll: true
+    - id: aws-bedrock
+      kind: bedrock
+      enabled: true
+      region: "us-east-1"
+      poll: true
+    - id: google-vertex
+      kind: vertex
+      enabled: true
+      project: "example-project"
+      location: "us-central1"
+      poll: true
+    - id: local-ollama
+      kind: local
+      enabled: true
+      endpoint: "http://127.0.0.1:11434"
+      poll: true
+    - id: mcp-bridge
+      kind: mcp
+      enabled: true
+      endpoint: "http://127.0.0.1:3921"
+      poll: true
+    - id: mock-openai
+      kind: mock
+      enabled: true
+      poll: false
+    - id: mock-anthropic
+      kind: mock
+      enabled: true
+      poll: false
+
+fanout:
+  max_parallel: 8
+  default_timeout_ms: 60000

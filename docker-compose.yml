@@ -1,0 +1,28 @@
+services:
+  smart-router:
+    build: .
+    ports:
+      - "18765:18765"
+    environment:
+      SMART_ROUTER_HOST: "0.0.0.0"
+      SMART_ROUTER_PORT: "18765"
+      SMART_ROUTER_API_KEY: "${SMART_ROUTER_API_KEY:-mirevox-dev-key}"
+      SMART_ROUTER_STUB_MODE: "${SMART_ROUTER_STUB_MODE:-true}"
+      SMART_ROUTER_CONFIG: /app/config/default.yaml
+      SMART_ROUTER_VAULT_PATH: /app/data/vault.json
+    volumes:
+      - router-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://127.0.0.1:18765/health",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  router-data:
