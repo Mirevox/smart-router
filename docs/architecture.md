@@ -1,4 +1,3 @@
-
 # Mirevox Smart Router — Architecture (v0.1)
 
 - **Package:** `@mirevox/smart-router` v`0.1.0` (`https://github.com/Mirevox/smart-router`)
@@ -24,7 +23,7 @@ v0.1 is explicitly a **runnable stub gateway that Mirevox owns**:
 - **Real (live) in v0.1:** HTTP gateway, Bearer auth, YAML config + env overrides, local `0o600` JSON + env `KeyVault`, activity/pattern `RoutingPolicy`, bounded parallel `fanoutTasks` orchestrator, periodic `DiscoveryRegistry` polling timer, and Docker Compose packaging.
 - **Stubbed in v0.1:** Upstream inference (`src/backends/stub.ts`) returns deterministic OpenAI-shaped echoes marked `mirevox.stub: true`, and `DiscoveryRegistry.pollOne()` populates a static `STUB_CATALOG` per provider kind marked `stub: true`.
 
-**Deferred Alternative — LiteLLM / Bifrost Delegation:** During council review (`devils-advocate.md`), the adversarial review recommended wrapping a pinned LiteLLM (or Apache-2.0 Bifrost) proxy instead of building and maintaining a new provider-normalizing gateway. That critique is preserved as an explicit **deferred architectural option for v0.2+**:
+**Deferred Alternative — LiteLLM / Bifrost Delegation:** During council review (`docs/devils-advocate.md`), the adversarial review recommended wrapping a pinned LiteLLM (or Apache-2.0 Bifrost) proxy instead of building and maintaining a new provider-normalizing gateway. That critique is preserved as an explicit **deferred architectural option for v0.2+**:
 - v0.1 keeps the owned Hono gateway (~450 LOC) to lock Mirevox's exact extension APIs (`POST /v1/fanout`, `/admin/*`, activity placement rules) without coupling to LiteLLM's Python stack.
 - When moving to live cloud traffic in v0.2+, Mirevox does **not** need to reimplement every cloud SDK from scratch—`src/backends/` is designed so a downstream LiteLLM/Bifrost HTTP adapter (or narrow native adapters for Ollama, Foundry, Bedrock, and Vertex) can drop behind the existing gateway contract.
 
@@ -204,7 +203,7 @@ All authenticated routes accept `Authorization: Bearer <SMART_ROUTER_API_KEY>` (
 
 1. **Single bearer token:** `/v1/*` and `/admin/*` currently share `SMART_ROUTER_API_KEY`; do not expose `:18765` to untrusted networks or share the admin key with untrusted clients.
 2. **Plaintext local vault:** `./data/vault.json` is stored as plaintext JSON with mode `0o600` (gitignored via `data/`). Suitable for a single-operator local/home-lab prototype only.
-3. **Preference-only placement policy:** `RoutingPolicy.decide()` does not yet hard-reject (`403`) an explicit cloud model requested under an `onprem` activity. Fail-closed enforcement is scheduled as v0.2 gate `H-01`.
+3. **Preference-only placement policy:** `RoutingPolicy.decide()` does not yet hard-reject (`403`) an explicit cloud model requested under an `onprem` activity. Fail-closed enforcement is scheduled as v0.2 gate `H-01` (see `docs/requirements.md`).
 4. **Fan-out timeout timer handle:** `fanoutTasks()` creates a `setTimeout` inside `Promise.race` without calling `clearTimeout` on fast completion (keeps Node event loop alive up to `default_timeout_ms` on process exit; scheduled for v0.2 fix `H-02`). Also, `tasks.length` has no upper-bound validation yet and duplicate `task.id` values collide in the order-preservation `Map`.
 5. **Unwired Zod validation:** `zod` is declared in `package.json` but config and request payloads currently rely on manual checks; full schema validation is scheduled as v0.2 gate `H-05`.
 
@@ -233,6 +232,6 @@ To graduate from the v0.1 stub without breaking client or module contracts:
 
 1. **Backend Adapter Interface (`src/backends/`):** Introduce a `CompletionBackend` interface with two initial implementations:
    - `stubBackend` (existing `stubComplete`, used when `stubMode()` is true or credentials are absent).
-   - Live adapter(s): either a **local OpenAI-compatible HTTP adapter** (Ollama/vLLM) plus a **downstream LiteLLM/Bifrost proxy adapter** (honoring DA's reuse path) or direct provider adapters using structured credentials (SigV4/ADC/Entra).
+   - Live adapter(s): either a **local OpenAI-compatible HTTP adapter** (Ollama/vLLM) plus a **downstream LiteLLM/Bifrost proxy adapter** (honoring the reuse option in `docs/devils-advocate.md`) or direct provider adapters using structured credentials (SigV4/ADC/Entra).
 2. **Fail-Closed Policy Enforcement (`src/router/policy.ts`):** Pass provider placement metadata from `DiscoveryRegistry` into `RoutingPolicy` so `onprem` activities reject any `cloud` backend with HTTP `403` before dispatch.
 3. **Structured Egress Telemetry (Mirevox Composition):** Add a Hono middleware emitting one structured JSON line per request and fan-out task (`request_id`, `activity`, `backend`, `placement`, `model`, `status`, `latency_ms`, `usage`, zero payload bodies, zero secrets) so sibling Mirevox modules (`evals`, `data-lineage`) can subscribe out-of-process.
