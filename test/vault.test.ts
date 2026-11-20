@@ -31,5 +31,24 @@ describe("KeyVault", () => {
   it("deletes keys", () => {
     assert.equal(vault.delete("foundry-prod"), true);
     assert.equal(vault.list().length, 0);
+    assert.equal(vault.delete("foundry-prod"), false);
+  });
+
+  it("prefers SMART_ROUTER_KEY_<BACKEND> over the file", () => {
+    vault.put("bed", "aws-bedrock", "file-secret");
+    const envName = "SMART_ROUTER_KEY_AWS_BEDROCK";
+    const previous = process.env[envName];
+    process.env[envName] = "env-secret";
+    try {
+      assert.equal(vault.getSecret("aws-bedrock"), "env-secret");
+      const listed = vault.list().find((e) => e.id === "bed");
+      assert.equal(listed?.has_secret, true);
+      assert.equal("secret" in (listed as object), false);
+      assert.equal(JSON.stringify(vault.list()).includes("env-secret"), false);
+      assert.equal(JSON.stringify(vault.list()).includes("file-secret"), false);
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
   });
 });
