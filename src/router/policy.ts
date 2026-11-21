@@ -3,7 +3,6 @@ import type {
   Placement,
   RouteDecision,
 } from "../types.js";
-import { stubMode } from "../config.js";
 
 function matchPattern(pattern: string, model: string): boolean {
   if (pattern.endsWith("*")) {
@@ -67,7 +66,8 @@ export class RoutingPolicy {
       backend: finalBackend,
       placement,
       activity,
-      stub: stubMode(),
+      // v0.1 completions are always stubComplete(); keep decision.stub honest
+      stub: true,
     };
   }
 }

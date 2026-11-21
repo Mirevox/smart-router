@@ -6,13 +6,14 @@ Verifier: Gemini acceptance council → orchestrator applied deltas D-01…D-05
 
 ## Verdict
 
-**ACCEPT** after must-fix deltas from conditional REJECT:
+**ACCEPT** (v0.1 stub) after must-fix deltas + validation-wave honesty fixes:
 
 - Bearer scheme enforced (no raw-token bypass)
 - JSON `{ error: { message, type } }` for 404 + malformed JSON 400
-- `mirevox.stub: true` always on stub completions
+- `mirevox.stub: true` / catalog `stub: true` always in v0.1 (no live flip from key + `STUB_MODE=false`)
 - Fan-out validates `tasks` is an array; clears timeout handles
-- Test report / counts synced; Docker runtime marked unverified on this VM
+- Stale `H-02` timer claim + `requirements-fr-nfr.md` drift cleaned
+- Docker Compose runtime still **UNVERIFIED** without a daemon on this VM
 
 ## Evidence
 
@@ -21,7 +22,7 @@ Verifier: Gemini acceptance council → orchestrator applied deltas D-01…D-05
 | `npm test` | PASS (see `docs/test-report.md`) |
 | `npm run typecheck` / `npm run build` | PASS |
 | Live `/health` smoke | PASS when server running |
-| Docker Compose boot (`NFR-06`) | **UNVERIFIED** here — no docker daemon; Dockerfile/Compose static review OK; verify on Docker host/CI |
+| Docker Compose boot (`NFR-06`) | **UNVERIFIED** here — no docker daemon; Dockerfile/Compose/healthcheck/`.env.example`/`.dockerignore`/non-root static review OK (validation pass); verify `docker compose up --build` on Docker host/CI |
 
 ## Deferred (documented, not blocking v0.1)
 

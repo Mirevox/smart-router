@@ -6,7 +6,6 @@ import type {
   ProviderKind,
   ProviderStatus,
 } from "../types.js";
-import { stubMode } from "../config.js";
 import type { KeyVault } from "../vault/key-vault.js";
 
 const STUB_CATALOG: Record<ProviderKind, string[]> = {
@@ -43,7 +42,8 @@ export class DiscoveryRegistry {
       healthy: false,
       last_poll_at: null,
       models: [],
-      stub: stubMode(),
+      // v0.1: catalogs are always stub data until live adapters ship (H-06)
+      stub: true,
     };
   }
 
@@ -85,7 +85,7 @@ export class DiscoveryRegistry {
     const now = new Date().toISOString();
     try {
       // v1: stub discovery. Real HTTP probes can replace this when credentials exist.
-      const hasKey = Boolean(this.vault.getSecret(p.id));
+      // v0.1: always STUB_CATALOG — never claim live discovery from key presence alone
       const models = STUB_CATALOG[p.kind];
       const status: ProviderStatus = {
         id: p.id,
@@ -94,7 +94,7 @@ export class DiscoveryRegistry {
         healthy: true,
         last_poll_at: now,
         models,
-        stub: stubMode() || !hasKey,
+        stub: true,
       };
       this.statuses.set(p.id, status);
       return status;
