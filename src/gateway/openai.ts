@@ -12,6 +12,7 @@ import type { KeyVault } from "../vault/key-vault.js";
 import { stubComplete } from "../backends/stub.js";
 import { liveComplete } from "../backends/live.js";
 import { decomposePromptToTasks, fanoutTasks } from "../fanout/splitter.js";
+import { GuardrailEngine } from "../guardrails/engine.js";
 
 type Vars = {
   Variables: {
@@ -26,6 +27,7 @@ export function createGateway(deps: {
   vault: KeyVault;
 }): Hono<Vars> {
   const app = new Hono<Vars>();
+  const guardrails = new GuardrailEngine(deps.config);
 
   app.use("*", async (c, next) => {
     if (c.req.path === "/health" || c.req.path === "/") {
@@ -96,6 +98,28 @@ export function createGateway(deps: {
       });
     }
 
+    const traceId =
+      body.trace_id?.trim() ||
+      c.req.header("x-trace-id")?.trim() ||
+      `trace_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+
+    const guardrailResult = guardrails.evaluate(body, traceId);
+    if (guardrailResult.blocked) {
+      c.header("x-mirevox-trace-id", traceId);
+      return c.json(
+        {
+          error: {
+            message: guardrailResult.message,
+            type: "guardrail_blocked",
+            code: guardrailResult.code,
+            trace_id: traceId,
+            event_id: guardrailResult.event.id,
+          },
+        },
+        guardrailResult.status,
+      );
+    }
+
     const provider = deps.config.registry.providers.find(
       (p) => p.id === decision.backend,
     );
@@ -117,19 +141,76 @@ export function createGateway(deps: {
       result = await stubComplete(decision, body.messages);
     }
 
+    result.mirevox.trace_id = traceId;
+    c.header("x-mirevox-trace-id", traceId);
+    if (guardrailResult.contextAlert) {
+      result.mirevox.context_alert = guardrailResult.contextAlert;
+      c.header("x-mirevox-context-alert", "compaction_triggered");
+    }
+
+    const candidateEndpoint =
+      provider?.endpoint && /^(?:https?|local):\/\//.test(provider.endpoint)
+        ? provider.endpoint
+        : `local://${decision.backend}`;
+
+    const awaitHooks = process.env.SMART_ROUTER_AWAIT_HOOKS === "true";
+    const lineageUrl = process.env.SMART_ROUTER_LINEAGE_URL?.trim();
+    if (lineageUrl) {
+      const lineageBase = lineageUrl.replace(/\/+$/, "");
+      const lineagePromise = fetch(`${lineageBase}/v1/trace`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tenantId: "mirevox",
+          sourceId: body.session_id?.trim() || "smart-router",
+          declaredResidency: decision.placement === "onprem" ? "onprem" : "us",
+          correlationId: traceId,
+          labels: { trace_id: traceId, activity: decision.activity },
+          payload: body.messages.map((m) => m.content ?? "").join("\n"),
+          autoClassify: true,
+          candidate: {
+            providerId: decision.backend,
+            modelId: body.model,
+            residency: decision.placement === "onprem" ? "onprem" : "us",
+            endpoint: candidateEndpoint,
+            leavesPerimeter: decision.placement !== "onprem",
+          },
+        }),
+      })
+        .then((res) => {
+          if (res.ok) {
+            result.mirevox.lineage_correlation_id = traceId;
+          }
+        })
+        .catch(() => {});
+      if (awaitHooks) {
+        await lineagePromise;
+      } else {
+        void lineagePromise;
+      }
+    }
+
     const evalsWebhook = process.env.SMART_ROUTER_EVALS_WEBHOOK_URL?.trim();
     if (evalsWebhook) {
-      void fetch(evalsWebhook, {
+      const evalPromise = fetch(evalsWebhook, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           conversationId: result.id,
+          traceId,
+          spanId: result.id,
           model: body.model,
           provider: decision.backend,
+          routePolicy: decision.placement,
           prompt: body.messages.map((m) => m.content ?? "").join("\n"),
           response: result.choices[0]?.message?.content ?? "",
         }),
       }).catch(() => {});
+      if (awaitHooks) {
+        await evalPromise;
+      } else {
+        void evalPromise;
+      }
     }
 
     return c.json(result);
@@ -217,6 +298,12 @@ export function createGateway(deps: {
   app.post("/admin/registry/poll", async (c) => {
     const data = await deps.registry.pollAll();
     return c.json({ data });
+  });
+
+  app.get("/admin/guardrails/events", (c) => {
+    const rawLimit = Number(c.req.query("limit") ?? 100);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+    return c.json({ data: guardrails.listEvents(limit) });
   });
 
   app.notFound((c) =>

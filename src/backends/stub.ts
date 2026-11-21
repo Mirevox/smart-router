@@ -20,6 +20,15 @@ export interface CompletionResult {
     placement: string;
     activity: string;
     stub: boolean;
+    trace_id?: string;
+    lineage_correlation_id?: string;
+    context_alert?: {
+      status: "warning";
+      compaction_triggered: true;
+      prompt_tokens: number;
+      context_window_tokens: number;
+      usage_ratio: number;
+    };
   };
 }
 

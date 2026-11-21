@@ -53,6 +53,15 @@ export interface FanoutConfig {
   default_timeout_ms: number;
 }
 
+export interface GuardrailsConfig {
+  max_identical_tool_calls?: number;
+  max_task_tokens?: number;
+  max_task_cost_usd?: number;
+  cost_per_1k_tokens_usd?: number;
+  context_window_tokens?: number;
+  context_warn_ratio?: number;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   gateway: GatewayConfig;
@@ -60,6 +69,7 @@ export interface AppConfig {
   vault: VaultConfig;
   registry: RegistryConfig;
   fanout: FanoutConfig;
+  guardrails?: GuardrailsConfig;
 }
 
 export interface DiscoveredModel {
@@ -88,6 +98,11 @@ export interface ChatMessage {
   content: string | null;
   name?: string;
   tool_call_id?: string;
+  tool_calls?: Array<{
+    id?: string;
+    type?: string;
+    function?: { name: string; arguments: string };
+  }>;
 }
 
 export interface ChatCompletionRequest {
@@ -102,6 +117,16 @@ export interface ChatCompletionRequest {
   placement?: Placement;
   /** Force backend override */
   backend?: string;
+  /** Distributed trace identifier propagated to Evals and Data Lineage */
+  trace_id?: string;
+  /** Agent session identifier for loop & context tracking */
+  session_id?: string;
+  /** Explicit tool invocations for loop-breaker inspection */
+  tool_calls?: Array<{ name: string; arguments: unknown }>;
+  /** Per-task token / USD budget ceiling */
+  budget?: { max_tokens?: number; max_cost_usd?: number };
+  /** Override context window token capacity for exhaustion alerting */
+  context_window_tokens?: number;
 }
 
 export interface FanoutTask {
