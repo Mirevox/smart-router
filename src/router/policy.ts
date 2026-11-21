@@ -61,13 +61,36 @@ export class RoutingPolicy {
       }
     }
 
+    const provider = this.config.registry.providers.find(
+      (p) => p.id === finalBackend,
+    );
+    const isLive = Boolean(provider?.live && provider?.endpoint);
+
     return {
       model: input.model,
       backend: finalBackend,
       placement,
       activity,
-      // v0.1 completions are always stubComplete(); keep decision.stub honest
-      stub: true,
+      stub: !isLive,
     };
+  }
+
+  isPlacementViolation(decision: RouteDecision): {
+    violated: boolean;
+    reason?: string;
+  } {
+    if (!this.config.routing.enforce_placement || decision.placement !== "onprem") {
+      return { violated: false };
+    }
+    const provider = this.config.registry.providers.find(
+      (p) => p.id === decision.backend,
+    );
+    if (provider && provider.kind !== "local" && provider.kind !== "mcp") {
+      return {
+        violated: true,
+        reason: `Placement policy requires onprem for activity '${decision.activity}', but backend '${decision.backend}' is '${provider.kind}'`,
+      };
+    }
+    return { violated: false };
   }
 }

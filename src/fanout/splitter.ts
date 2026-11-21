@@ -1,4 +1,9 @@
-import type { AppConfig, FanoutRequest, FanoutTask } from "../types.js";
+import type {
+  AppConfig,
+  FanoutRequest,
+  FanoutTask,
+  SplitPromptRequest,
+} from "../types.js";
 import type { RoutingPolicy } from "../router/policy.js";
 import { stubComplete, type CompletionResult } from "../backends/stub.js";
 
@@ -104,4 +109,39 @@ export async function fanoutTasks(
     parallel: Math.min(limit, req.tasks.length),
     results: ordered,
   };
+}
+
+/**
+ * Rule-based task decomposition for multi-step prompts.
+ * Splits numbered bullets, semicolon clauses, or chained "and ..." directives into FanoutTasks.
+ */
+export function decomposePromptToTasks(
+  input: SplitPromptRequest,
+): FanoutTask[] {
+  const maxTasks = Math.max(1, Math.min(input.max_tasks ?? 8, 32));
+  const raw = input.prompt.trim();
+  if (!raw) return [];
+
+  const bulletSplit = raw
+    .split(/(?:^|\r?\n)\s*(?:\d+[.)]|[-*])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const segments =
+    bulletSplit.length > 1
+      ? bulletSplit
+      : raw
+          .split(/\s*;\s*|\s+\band\s+(?=(?:also|then|finally|[a-z]+)\b)/i)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+  const tasks = (segments.length > 0 ? segments : [raw]).slice(0, maxTasks);
+  return tasks.map((segment, index) => ({
+    id: `subtask-${index + 1}`,
+    model: input.model,
+    activity: input.activity,
+    placement: input.placement,
+    backend: input.backend,
+    messages: [{ role: "user", content: segment }],
+  }));
 }

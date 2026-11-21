@@ -1,11 +1,17 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import type { AppConfig, ChatCompletionRequest, FanoutRequest } from "../types.js";
+import type {
+  AppConfig,
+  ChatCompletionRequest,
+  FanoutRequest,
+  SplitPromptRequest,
+} from "../types.js";
 import type { RoutingPolicy } from "../router/policy.js";
 import type { DiscoveryRegistry } from "../registry/providers.js";
 import type { KeyVault } from "../vault/key-vault.js";
 import { stubComplete } from "../backends/stub.js";
-import { fanoutTasks } from "../fanout/splitter.js";
+import { liveComplete } from "../backends/live.js";
+import { decomposePromptToTasks, fanoutTasks } from "../fanout/splitter.js";
 
 type Vars = {
   Variables: {
@@ -83,18 +89,90 @@ export function createGateway(deps: {
       placement: body.placement,
       backend: body.backend,
     });
-    const result = await stubComplete(decision, body.messages);
+    const violation = deps.policy.isPlacementViolation(decision);
+    if (violation.violated) {
+      throw new HTTPException(403, {
+        message: violation.reason ?? "Placement policy violation",
+      });
+    }
+
+    const provider = deps.config.registry.providers.find(
+      (p) => p.id === decision.backend,
+    );
+    let result;
+    if (provider?.live && provider?.endpoint) {
+      try {
+        result = await liveComplete(
+          provider,
+          deps.vault.getSecret(decision.backend),
+          decision,
+          body,
+        );
+      } catch (err) {
+        throw new HTTPException(502, {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else {
+      result = await stubComplete(decision, body.messages);
+    }
+
+    const evalsWebhook = process.env.SMART_ROUTER_EVALS_WEBHOOK_URL?.trim();
+    if (evalsWebhook) {
+      void fetch(evalsWebhook, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          conversationId: result.id,
+          model: body.model,
+          provider: decision.backend,
+          prompt: body.messages.map((m) => m.content ?? "").join("\n"),
+          response: result.choices[0]?.message?.content ?? "",
+        }),
+      }).catch(() => {});
+    }
+
     return c.json(result);
   });
 
-  /** Non-OpenAI extension: parallel task fan-out */
+  /** Non-OpenAI extension: parallel task fan-out (accepts tasks[] or prompt) */
   app.post("/v1/fanout", async (c) => {
-    const body = (await c.req.json()) as FanoutRequest;
-    if (!Array.isArray(body?.tasks) || body.tasks.length === 0) {
-      throw new HTTPException(400, { message: "tasks[] required" });
+    const body = (await c.req.json()) as Partial<FanoutRequest> &
+      Partial<SplitPromptRequest>;
+    const tasks =
+      Array.isArray(body?.tasks) && body.tasks.length > 0
+        ? body.tasks
+        : typeof body?.prompt === "string" && body.prompt.trim()
+          ? decomposePromptToTasks(body as SplitPromptRequest)
+          : [];
+    if (tasks.length === 0) {
+      throw new HTTPException(400, {
+        message: "tasks[] required",
+      });
     }
-    const result = await fanoutTasks(deps.config, deps.policy, body);
+    const result = await fanoutTasks(deps.config, deps.policy, {
+      tasks,
+      timeout_ms: body.timeout_ms,
+    });
     return c.json(result);
+  });
+
+  /** Non-OpenAI extension: prompt decomposition + parallel task fan-out */
+  app.post("/v1/split", async (c) => {
+    const body = (await c.req.json()) as SplitPromptRequest;
+    if (
+      !body?.prompt ||
+      typeof body.prompt !== "string" ||
+      !body.prompt.trim()
+    ) {
+      throw new HTTPException(400, { message: "prompt is required" });
+    }
+    const tasks = decomposePromptToTasks(body);
+    const fanout = await fanoutTasks(deps.config, deps.policy, {
+      tasks,
+      timeout_ms: body.timeout_ms,
+    });
+    return c.json({ ...fanout, decomposed_tasks: tasks.length });
   });
 
   // Admin: vault

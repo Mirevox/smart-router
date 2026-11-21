@@ -26,8 +26,10 @@ describe("KeyVault", () => {
     assert.equal(listed[0]?.has_secret, true);
     assert.ok(!("secret" in (listed[0] as object)));
     assert.equal(vault.getSecret("azure-foundry"), "sk-test-secret");
-    const mode = statSync(join(dir, "vault.json")).mode & 0o777;
-    assert.equal(mode, 0o600);
+    if (process.platform !== "win32") {
+      const mode = statSync(join(dir, "vault.json")).mode & 0o777;
+      assert.equal(mode, 0o600);
+    }
   });
 
   it("deletes keys", () => {

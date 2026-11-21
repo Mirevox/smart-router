@@ -22,6 +22,7 @@ export interface RoutingConfig {
   activities: Record<string, Placement>;
   model_routes: Record<string, string>;
   fallback_backend: string;
+  enforce_placement?: boolean;
 }
 
 export interface VaultConfig {
@@ -38,6 +39,8 @@ export interface ProviderConfig {
   project?: string;
   location?: string;
   poll?: boolean;
+  live?: boolean;
+  api_path?: string;
 }
 
 export interface RegistryConfig {
@@ -112,6 +115,16 @@ export interface FanoutTask {
 
 export interface FanoutRequest {
   tasks: FanoutTask[];
+  timeout_ms?: number;
+}
+
+export interface SplitPromptRequest {
+  prompt: string;
+  model?: string;
+  activity?: string;
+  placement?: Placement;
+  backend?: string;
+  max_tasks?: number;
   timeout_ms?: number;
 }
 
