@@ -152,3 +152,7 @@ Default port `18765` avoids clashing with common 3000/5173/8080 services.
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). See `LICENSE` in the repository root. `package.json` declares `"license": "Apache-2.0"`.
+
+## Verification
+
+Test suite, smoke test, and container verification results are recorded in [`VERIFICATION.md`](./VERIFICATION.md).
