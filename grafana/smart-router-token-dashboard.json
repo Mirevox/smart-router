@@ -1,0 +1,194 @@
+{
+  "id": null,
+  "uid": "mirevox-smart-router-tokens",
+  "title": "Mirevox Smart Router: Token Economics & FinOps",
+  "tags": ["mirevox", "smart-router", "finops", "tokens", "prometheus"],
+  "style": "dark",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total Tokens & Context-Engine Tokens Saved",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(mirevox_router_tokens_total)",
+          "legendFormat": "Total Tokens"
+        },
+        {
+          "expr": "sum(mirevox_router_tokens_saved_total)",
+          "legendFormat": "Context-Engine Tokens Saved"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Estimated Spend vs. Cost Saved (USD)",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(mirevox_router_cost_usd_total)",
+          "legendFormat": "Estimated Spend (USD)"
+        },
+        {
+          "expr": "sum(mirevox_router_cost_saved_usd_total)",
+          "legendFormat": "Cost Saved (USD)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Duplicate Context Waste",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (appcode) (mirevox_router_duplicate_context_tokens_total)",
+          "legendFormat": "{{appcode}} Duplicate Tokens"
+        },
+        {
+          "expr": "sum(mirevox_router_optimization_potential_tokens)",
+          "legendFormat": "Optimization Potential Tokens"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1000 },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "Active Optimization Suggestions",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "mirevox_smart_router_active_suggestions",
+          "legendFormat": "{{code}} ({{severity}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Guardrail Trips",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (type, blocked) (mirevox_smart_router_guardrail_events_total)",
+          "legendFormat": "{{type}} (blocked={{blocked}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Prompt Token P95 by Model",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(mirevox_smart_router_prompt_tokens_bucket[5m])))",
+          "legendFormat": "{{model}} p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Requests & Spend by Appcode",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (appcode, status) (mirevox_smart_router_requests_total)",
+          "legendFormat": "{{appcode}} ({{status}})"
+        },
+        {
+          "expr": "sum by (appcode, tier) (mirevox_router_cost_usd_total)",
+          "legendFormat": "{{appcode}} {{tier}} USD"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    }
+  ]
+}

@@ -19,6 +19,14 @@ export function loadConfig(path = DEFAULT_CONFIG_PATH): AppConfig {
     process.env.SMART_ROUTER_API_KEY ?? raw.gateway.api_key;
   raw.vault.path = process.env.SMART_ROUTER_VAULT_PATH ?? raw.vault.path;
 
+  if (process.env.SMART_ROUTER_PUBLIC_METRICS !== undefined) {
+    const val = process.env.SMART_ROUTER_PUBLIC_METRICS.toLowerCase();
+    raw.analytics = {
+      ...raw.analytics,
+      public_metrics: val === "1" || val === "true",
+    };
+  }
+
   return raw;
 }
 

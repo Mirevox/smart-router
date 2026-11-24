@@ -1,6 +1,6 @@
 {
   "name": "@mirevox/smart-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mirevox Smart Router — OpenAI-compatible gateway with key vault, on-prem/cloud routing, task fan-out, provider discovery",
   "scripts": {
     "dev": "tsx watch src/index.ts",

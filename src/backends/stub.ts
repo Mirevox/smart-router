@@ -29,6 +29,13 @@ export interface CompletionResult {
       context_window_tokens: number;
       usage_ratio: number;
     };
+    token_analytics?: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      estimated_cost_usd: number;
+      context_tokens_saved: number;
+      appcode: string;
+    };
   };
 }
 

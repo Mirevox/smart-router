@@ -4,6 +4,7 @@ import type {
   AppConfig,
   ChatCompletionRequest,
   FanoutRequest,
+  FanoutTask,
   SplitPromptRequest,
 } from "../types.js";
 import type { RoutingPolicy } from "../router/policy.js";
@@ -11,8 +12,16 @@ import type { DiscoveryRegistry } from "../registry/providers.js";
 import type { KeyVault } from "../vault/key-vault.js";
 import { stubComplete } from "../backends/stub.js";
 import { liveComplete } from "../backends/live.js";
-import { decomposePromptToTasks, fanoutTasks } from "../fanout/splitter.js";
+import {
+  decomposePromptToTasks,
+  fanoutTasks,
+  type FanoutResponse,
+} from "../fanout/splitter.js";
 import { GuardrailEngine } from "../guardrails/engine.js";
+import {
+  TokenAnalyticsEngine,
+  type TokenAnalyticsSummary,
+} from "../analytics/token-advisor.js";
 
 type Vars = {
   Variables: {
@@ -20,17 +29,140 @@ type Vars = {
   };
 };
 
+function resolveAppcode(
+  bodyAppcode: string | undefined,
+  headerValue: string | undefined,
+): string {
+  return bodyAppcode?.trim() || headerValue?.trim() || "default";
+}
+
+function resolveSessionId(
+  bodySessionId: string | undefined,
+  headerValue: string | undefined,
+): string | undefined {
+  return bodySessionId?.trim() || headerValue?.trim() || undefined;
+}
+
+function resolveTokensSaved(
+  bodyValue: number | undefined,
+  headerValue: string | undefined,
+): number {
+  if (
+    typeof bodyValue === "number" &&
+    Number.isFinite(bodyValue) &&
+    bodyValue >= 0
+  ) {
+    return Math.round(bodyValue);
+  }
+  if (headerValue !== undefined) {
+    const parsed = Number(headerValue.trim());
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.round(parsed);
+    }
+  }
+  return 0;
+}
+
+function recordFanoutExecution(
+  analytics: TokenAnalyticsEngine,
+  route: "/v1/fanout" | "/v1/split",
+  tasks: FanoutTask[],
+  fanout: FanoutResponse,
+  defaults: {
+    appcode: string;
+    sessionId?: string;
+    contextTokensSaved: number;
+  },
+): TokenAnalyticsSummary {
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let estimatedCostUsd = 0;
+  let totalSaved = 0;
+
+  for (let i = 0; i < fanout.results.length; i += 1) {
+    const res = fanout.results[i]!;
+    const task = tasks[i];
+    const taskAppcode = task?.appcode?.trim() || defaults.appcode;
+    const taskSessionId = task?.session_id?.trim() || defaults.sessionId;
+    const taskSaved =
+      task?.context_tokens_saved !== undefined
+        ? resolveTokensSaved(task.context_tokens_saved, undefined)
+        : i === 0
+          ? defaults.contextTokensSaved
+          : 0;
+    const decision = res.decision;
+    const model = decision?.model ?? task?.model ?? "gpt-4o-mini";
+    const backend = decision?.backend ?? task?.backend ?? "unknown";
+    const placement = decision?.placement ?? task?.placement ?? "cloud";
+    const activity = decision?.activity ?? task?.activity ?? "chat";
+
+    if (res.ok && res.result) {
+      const summary = analytics.record({
+        route,
+        appcode: taskAppcode,
+        model,
+        backend,
+        placement,
+        activity,
+        session_id: taskSessionId,
+        messages: task?.messages,
+        prompt_tokens: res.result.usage.prompt_tokens,
+        completion_tokens: res.result.usage.completion_tokens,
+        total_tokens: res.result.usage.total_tokens,
+        context_tokens_saved: taskSaved,
+      });
+      res.result.mirevox.token_analytics = summary;
+      promptTokens += summary.prompt_tokens;
+      completionTokens += summary.completion_tokens;
+      estimatedCostUsd = Number(
+        (estimatedCostUsd + summary.estimated_cost_usd).toFixed(6),
+      );
+      totalSaved += summary.context_tokens_saved;
+    } else {
+      analytics.record({
+        route,
+        appcode: taskAppcode,
+        model,
+        backend,
+        placement,
+        activity,
+        session_id: taskSessionId,
+        messages: task?.messages,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        context_tokens_saved: 0,
+        error: true,
+      });
+    }
+  }
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    estimated_cost_usd: estimatedCostUsd,
+    context_tokens_saved: totalSaved,
+    appcode: defaults.appcode,
+  };
+}
+
 export function createGateway(deps: {
   config: AppConfig;
   policy: RoutingPolicy;
   registry: DiscoveryRegistry;
   vault: KeyVault;
+  analytics?: TokenAnalyticsEngine;
 }): Hono<Vars> {
   const app = new Hono<Vars>();
   const guardrails = new GuardrailEngine(deps.config);
+  const analytics = deps.analytics ?? new TokenAnalyticsEngine(deps.config);
 
   app.use("*", async (c, next) => {
-    if (c.req.path === "/health" || c.req.path === "/") {
+    const publicMetrics = deps.config.analytics?.public_metrics !== false;
+    if (
+      c.req.path === "/health" ||
+      c.req.path === "/" ||
+      (publicMetrics && c.req.path === "/metrics" && c.req.method === "GET")
+    ) {
       return next();
     }
     const expected = deps.config.gateway.api_key;
@@ -51,7 +183,7 @@ export function createGateway(deps: {
   app.get("/", (c) =>
     c.json({
       name: "mirevox-smart-router",
-      version: "0.1.0",
+      version: "0.2.0",
       openai_base: "/v1",
       docs: "See README.md",
     }),
@@ -65,6 +197,12 @@ export function createGateway(deps: {
         healthy: p.healthy,
         stub: p.stub,
       })),
+    }),
+  );
+
+  app.get("/metrics", (c) =>
+    c.body(analytics.renderPrometheus(), 200, {
+      "content-type": "text/plain; version=0.0.4; charset=utf-8",
     }),
   );
 
@@ -98,6 +236,19 @@ export function createGateway(deps: {
       });
     }
 
+    const appcode = resolveAppcode(
+      body.appcode,
+      c.req.header("x-mirevox-appcode"),
+    );
+    const sessionId = resolveSessionId(
+      body.session_id,
+      c.req.header("x-mirevox-session-id"),
+    );
+    const contextTokensSaved = resolveTokensSaved(
+      body.context_tokens_saved,
+      c.req.header("x-mirevox-tokens-saved"),
+    );
+
     const traceId =
       body.trace_id?.trim() ||
       c.req.header("x-trace-id")?.trim() ||
@@ -105,6 +256,22 @@ export function createGateway(deps: {
 
     const guardrailResult = guardrails.evaluate(body, traceId);
     if (guardrailResult.blocked) {
+      analytics.record({
+        route: "/v1/chat/completions",
+        appcode,
+        model: decision.model,
+        backend: decision.backend,
+        placement: decision.placement,
+        activity: decision.activity,
+        session_id: sessionId,
+        messages: body.messages,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        context_tokens_saved: 0,
+        context_window_tokens: body.context_window_tokens,
+        guardrailEvent: guardrailResult.event,
+        blocked: true,
+      });
       c.header("x-mirevox-trace-id", traceId);
       return c.json(
         {
@@ -133,6 +300,23 @@ export function createGateway(deps: {
           body,
         );
       } catch (err) {
+        analytics.record({
+          route: "/v1/chat/completions",
+          appcode,
+          model: decision.model,
+          backend: decision.backend,
+          placement: decision.placement,
+          activity: decision.activity,
+          session_id: sessionId,
+          messages: body.messages,
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          context_tokens_saved: 0,
+          context_window_tokens: body.context_window_tokens,
+          contextAlert: guardrailResult.contextAlert,
+          guardrailEvent: guardrailResult.event,
+          error: true,
+        });
         throw new HTTPException(502, {
           message: err instanceof Error ? err.message : String(err),
         });
@@ -148,6 +332,24 @@ export function createGateway(deps: {
       c.header("x-mirevox-context-alert", "compaction_triggered");
     }
 
+    result.mirevox.token_analytics = analytics.record({
+      route: "/v1/chat/completions",
+      appcode,
+      model: decision.model,
+      backend: decision.backend,
+      placement: decision.placement,
+      activity: decision.activity,
+      session_id: sessionId,
+      messages: body.messages,
+      prompt_tokens: result.usage.prompt_tokens,
+      completion_tokens: result.usage.completion_tokens,
+      total_tokens: result.usage.total_tokens,
+      context_tokens_saved: contextTokensSaved,
+      context_window_tokens: body.context_window_tokens,
+      contextAlert: guardrailResult.contextAlert,
+      guardrailEvent: guardrailResult.event,
+    });
+
     const candidateEndpoint =
       provider?.endpoint && /^(?:https?|local):\/\//.test(provider.endpoint)
         ? provider.endpoint
@@ -162,7 +364,7 @@ export function createGateway(deps: {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           tenantId: "mirevox",
-          sourceId: body.session_id?.trim() || "smart-router",
+          sourceId: sessionId || "smart-router",
           declaredResidency: decision.placement === "onprem" ? "onprem" : "us",
           correlationId: traceId,
           labels: { trace_id: traceId, activity: decision.activity },
@@ -235,7 +437,24 @@ export function createGateway(deps: {
       tasks,
       timeout_ms: body.timeout_ms,
     });
-    return c.json(result);
+    const tokenSummary = recordFanoutExecution(
+      analytics,
+      "/v1/fanout",
+      tasks,
+      result,
+      {
+        appcode: resolveAppcode(body.appcode, c.req.header("x-mirevox-appcode")),
+        sessionId: resolveSessionId(
+          body.session_id,
+          c.req.header("x-mirevox-session-id"),
+        ),
+        contextTokensSaved: resolveTokensSaved(
+          body.context_tokens_saved,
+          c.req.header("x-mirevox-tokens-saved"),
+        ),
+      },
+    );
+    return c.json({ ...result, mirevox: { token_analytics: tokenSummary } });
   });
 
   /** Non-OpenAI extension: prompt decomposition + parallel task fan-out */
@@ -253,7 +472,28 @@ export function createGateway(deps: {
       tasks,
       timeout_ms: body.timeout_ms,
     });
-    return c.json({ ...fanout, decomposed_tasks: tasks.length });
+    const tokenSummary = recordFanoutExecution(
+      analytics,
+      "/v1/split",
+      tasks,
+      fanout,
+      {
+        appcode: resolveAppcode(body.appcode, c.req.header("x-mirevox-appcode")),
+        sessionId: resolveSessionId(
+          body.session_id,
+          c.req.header("x-mirevox-session-id"),
+        ),
+        contextTokensSaved: resolveTokensSaved(
+          body.context_tokens_saved,
+          c.req.header("x-mirevox-tokens-saved"),
+        ),
+      },
+    );
+    return c.json({
+      ...fanout,
+      decomposed_tasks: tasks.length,
+      mirevox: { token_analytics: tokenSummary },
+    });
   });
 
   // Admin: vault
@@ -304,6 +544,38 @@ export function createGateway(deps: {
     const rawLimit = Number(c.req.query("limit") ?? 100);
     const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
     return c.json({ data: guardrails.listEvents(limit) });
+  });
+
+  // Admin: token analytics & optimization advisor
+  app.get("/admin/analytics/tokens", (c) =>
+    c.json(
+      analytics.getSnapshot({
+        appcode: c.req.query("appcode"),
+        model: c.req.query("model"),
+        backend: c.req.query("backend"),
+        activity: c.req.query("activity"),
+        session_id: c.req.query("session_id"),
+      }),
+    ),
+  );
+
+  app.get("/admin/analytics/suggestions", (c) => {
+    const rawLimit = c.req.query("limit");
+    const parsedLimit =
+      rawLimit !== undefined && rawLimit.trim() !== ""
+        ? Number(rawLimit)
+        : undefined;
+    const data = analytics.getSuggestions({
+      code: c.req.query("code"),
+      severity: c.req.query("severity"),
+      limit:
+        parsedLimit !== undefined &&
+        Number.isFinite(parsedLimit) &&
+        parsedLimit > 0
+          ? parsedLimit
+          : undefined,
+    });
+    return c.json({ data, total: data.length });
   });
 
   app.notFound((c) =>

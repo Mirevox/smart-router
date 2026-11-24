@@ -62,6 +62,17 @@ export interface GuardrailsConfig {
   context_warn_ratio?: number;
 }
 
+export type ModelTier = "frontier" | "standard" | "economy" | "local";
+
+export interface AnalyticsConfig {
+  enabled?: boolean;
+  public_metrics?: boolean;
+  max_tracked_fingerprints?: number;
+  max_events?: number;
+  model_cost_per_1k_usd?: Record<string, number>;
+  tier_cost_per_1k_usd?: Partial<Record<ModelTier, number>>;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   gateway: GatewayConfig;
@@ -70,6 +81,7 @@ export interface AppConfig {
   registry: RegistryConfig;
   fanout: FanoutConfig;
   guardrails?: GuardrailsConfig;
+  analytics?: AnalyticsConfig;
 }
 
 export interface DiscoveredModel {
@@ -127,6 +139,10 @@ export interface ChatCompletionRequest {
   budget?: { max_tokens?: number; max_cost_usd?: number };
   /** Override context window token capacity for exhaustion alerting */
   context_window_tokens?: number;
+  /** Application code for FinOps token and cost attribution */
+  appcode?: string;
+  /** Explicit context tokens saved by upstream Context Engine packing */
+  context_tokens_saved?: number;
 }
 
 export interface FanoutTask {
@@ -135,12 +151,18 @@ export interface FanoutTask {
   activity?: string;
   placement?: Placement;
   backend?: string;
+  appcode?: string;
+  session_id?: string;
+  context_tokens_saved?: number;
   messages: ChatMessage[];
 }
 
 export interface FanoutRequest {
   tasks: FanoutTask[];
   timeout_ms?: number;
+  appcode?: string;
+  session_id?: string;
+  context_tokens_saved?: number;
 }
 
 export interface SplitPromptRequest {
@@ -149,6 +171,9 @@ export interface SplitPromptRequest {
   activity?: string;
   placement?: Placement;
   backend?: string;
+  appcode?: string;
+  session_id?: string;
+  context_tokens_saved?: number;
   max_tasks?: number;
   timeout_ms?: number;
 }

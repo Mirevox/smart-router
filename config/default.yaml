@@ -76,3 +76,7 @@ registry:
 fanout:
   max_parallel: 8
   default_timeout_ms: 60000
+
+analytics:
+  public_metrics: true
+  max_tracked_fingerprints: 1000
