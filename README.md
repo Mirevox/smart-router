@@ -153,6 +153,13 @@ Default port `18765` avoids clashing with common 3000/5173/8080 services.
 
 Licensed under the [Apache License, Version 2.0](LICENSE). See `LICENSE` in the repository root. `package.json` declares `"license": "Apache-2.0"`.
 
+## What's New in v0.2.0
+
+- **Execution Guardrails:** Loop Detector (`>3` identical tool+args invocations → `429 LOOP_CIRCUIT_BREAKER`), Per-Task Budget Cap (`402 BUDGET_CAP_EXCEEDED`), and 80% Context Exhaustion Alert (`x-mirevox-context-alert: compaction_triggered`) logged at `GET /admin/guardrails/events`.
+- **End-to-End Trace Propagation:** `trace_id` propagation to Data Lineage (`POST /v1/trace` via schema-valid `local://` fallback endpoints) and Evals (`POST /api/capture/webhook`).
+- **TokenAnalyticsEngine & Optimization Advisor (`src/analytics/token-advisor.ts`):** Tracks requests, tokens, `context_tokens_saved`, duplicate `>1,000`-char raw context dumps via bounded SHA-256 fingerprinting, and surfaces recommendations (`use_context_engine_pack`, `deduplicate_repo_dump`, `downgrade_model_tier`, `compact_session_history`) at `GET /admin/analytics/tokens` and `GET /admin/analytics/suggestions`.
+- **Prometheus & Grafana FinOps:** Public `GET /metrics` (`mirevox_router_tokens_total`, `mirevox_router_tokens_saved_total`, `mirevox_router_duplicate_context_tokens_total`) paired with [`grafana/smart-router-token-dashboard.json`](./grafana/smart-router-token-dashboard.json).
+
 ## Verification
 
 Test suite, smoke test, and container verification results are recorded in [`VERIFICATION.md`](./VERIFICATION.md).
